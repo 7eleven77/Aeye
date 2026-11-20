@@ -63,6 +63,20 @@ Aeye works right away from the top bar (**right-click** the eye icon to capture,
 o.bind("SUPER + SHIFT + PRINT", "Aeye", os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.7eleven77.aeye/bin/aeye capture")
 ```
 
+### Removal
+
+Uninstall cleanly with the Omarchy plugin manager:
+
+```sh
+omarchy plugin remove io.github.7eleven77.aeye
+```
+
+If you also added the optional Hyprland shortcut or want to clear local settings and manual API keys:
+
+```sh
+rm -f ~/.config/omarchy/aeye.json ~/.config/omarchy/aeye-keys.json
+```
+
 ---
 
 ## Everyday Controls
@@ -119,4 +133,4 @@ Run the offline smoke & compliance test suite anytime:
 
 ## License
 
-Licensed under the [MIT License](LICENSE) — 100% legally solid, with a seriously silly human translation included at the bottom.
+Licensed under the [MIT License](LICENSE) — 100% legally solid, with a [seriously silly human translation](LICENSE-HUMAN.md) for mortals.
