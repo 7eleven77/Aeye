@@ -46,7 +46,7 @@ Aeye reduces that entire loop to one keystroke — directly inside `omarchy-shel
 Install from GitHub using the Omarchy plugin manager:
 
 ```sh
-omarchy plugin add https://github.com/7eleven77/aeye.git --enable
+omarchy plugin add https://github.com/7eleven77/Aeye.git --enable
 ```
 
 Update at any time:
