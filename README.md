@@ -77,50 +77,60 @@ omarchy restart shell
 
 ### 1. Point, Annotate & Fix
 
-Draw an arrow directly onto the captured region so the model knows exactly which line or UI element you mean. Answers render with structured Markdown, live theme-native syntax highlighting, per-block **Copy** buttons, and one-click file export (**`↓ Save`**). The active Settings panel is shown beside the HUD so every toggle state is transparent.
+Draw an inline arrow (`↗`) directly onto the captured region so the model knows which line or UI element you mean. Answers stream live with structured Markdown, theme-native syntax highlighting, per-block **Copy** buttons, and one-click file export (**`↓ Save`**).
 
 *Active settings: `Minimize on send: OFF` · `Auto-analyze: OFF` · `Model: Gemini Flash`*
 
-![Point and debug with inline arrow and syntax-highlighted fix](docs/media/01-arrow-debug.gif)
+![Point and debug with inline arrow and syntax-highlighted TypeScript fix](docs/media/01-arrow-debug.gif)
 
 ---
 
-### 2. Background Flow (Stay in Your Editor)
+### 2. Organize Raw Data & Export to `.pdf` (`↓ Save`)
+
+Capture chaotic, unsorted notes, logs, or tables, let Aeye organize them cleanly by priority, owner, deadline, and totals — then click **`↓ Save`** to export directly to a multi-page **`.pdf`** (zero external dependencies), `.md`, `.txt`, `.html`, `.json`, or any custom path.
+
+*Active settings: `All optional toggles OFF` · `Placement: Top` · `Export: .pdf`*
+
+![Organize unsorted notes and export directly to a multi-page PDF](docs/media/02-organize-save-pdf.gif)
+
+---
+
+### 3. Hyprland Tiling Sidebar (`Tile R`), Auto-Analyze & Opt-in System Debug
+
+Switch HUD placement to **Tile L** or **Tile R** so Hyprland tiles your windows right beside Aeye with zero overlap. Combine **Auto-analyze** (instant summary, 3 clickable `✦` follow-up prompts, and smart model recommendations) with opt-in **`⚠ System Debug`** to correlate on-screen errors against real read-only system state (`journalctl`, failed `systemd` units, `hyprctl`, RAM/disk) — plus **`>_ Fix in CLI`** handoff to `omarchy-agent`.
+
+*Active settings: `Auto-analyze: ON` · `System Debug: ON (read-only)` · `Placement: Tile R`*
+
+![Hyprland tiled sidebar with opt-in System Debug diagnostics and AI follow-ups](docs/media/03-sysdebug-tile.gif)
+
+---
+
+### 4. Background Flow (Stay in Your Editor)
 
 With **Minimize on send** enabled, pressing <kbd>Enter</kbd> immediately tucks the HUD away so you never stare at a spinner. The top-bar spark pupil animates while the model works, then delivers a clickable **Answer Ready** toast to reopen the answer.
 
 *Active settings: `Minimize on send: ON` · `Auto-analyze: OFF` · `Model: Gemini Argon`*
 
-![Background analysis with top-bar animation and clickable notification](docs/media/02-background-flow.gif)
+![Background analysis with top-bar animation and clickable notification](docs/media/04-background-flow.gif)
 
 ---
 
-### 3. Auto-Analyze & Live Streaming
-
-Turn on **Auto-analyze on capture** to start inspecting every screenshot immediately — with live scanning progress, structured Markdown summaries, 3 clickable follow-up questions (`✦`), and automatic recommendations when another active model is a better fit for code, prose, charts, or realtime topics. Combine with **Show visual reasoning** and **Tile L / Tile R** for a native Hyprland tiled sidebar.
-
-*Active settings: `Auto-analyze: ON` · `Minimize on send: ON` · `Model: Gemini Argon`*
-
-![Auto-analyze with live scanning progress and structured summary](docs/media/03-auto-analyze.gif)
-
----
-
-### 4. Privacy Redaction in Omasnap
+### 5. Privacy Redaction in Omasnap
 
 Need to pixelate tokens, emails, or sensitive code before sending a screenshot to an AI model? Click **Omasnap** (`✎`), redact sensitive regions, and save — Aeye automatically reloads the redacted image before anything leaves your machine.
 
 *Active settings: `Auto-analyze: OFF` (inspect & redact before sending)*
 
-![Redacting sensitive information in Omasnap before sending](docs/media/04-omasnap-redact.gif)
+![Redacting sensitive information in Omasnap before sending](docs/media/05-omasnap-redact.gif)
 
 ---
 
-### 5. Live Omarchy Theme Integration
+### 6. Live Omarchy Theme Integration
 
 Every surface, border, button, status accent, tooltip, wordmark, and syntax token pulls live from your active Omarchy theme (`omarchy theme set ...`) — across dark, warm, emerald, synthwave, and crisp light themes with zero hardcoded UI chrome colors.
 
 <p align="center">
-  <img src="docs/media/05-live-theme.gif" width="440" alt="Aeye top-bar settings hub adapting live across 10 Omarchy themes" />
+  <img src="docs/media/06-live-theme.gif" width="440" alt="Aeye top-bar settings hub adapting live across 10 Omarchy themes" />
 </p>
 
 ---

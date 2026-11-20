@@ -863,7 +863,7 @@ Item {
         flushPara()
         continue
       }
-      var hm = trimmed.match(/^(#{1,3})\s+(.+)$/)
+      var hm = trimmed.match(/^(#{1,6})\s+(.+)$/)
       if (hm) {
         flushPara()
         blocks.push({ kind: "heading", level: hm[1].length, html: formatInlineHtml(hm[2]), raw: hm[2], lang: "", marker: "" })
