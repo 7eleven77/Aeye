@@ -27,6 +27,7 @@ BarWidget {
   readonly property bool minimizeOnSend: svc ? svc.minimizeOnSend === true : true
   readonly property bool minimalMode: svc ? svc.minimalMode === true : false
   readonly property bool showReason: svc ? svc.showReason === true : false
+  readonly property bool systemDebug: svc ? svc.systemDebug === true : false
   readonly property string activeLang: svc ? String(svc.activeLang || "en") : "en"
   readonly property string localeDisplayLabel: svc ? String(svc.localeDisplayLabel || "Auto (EN)") : "Auto (EN)"
   readonly property string hudPlacement: svc ? String(svc.hudPlacement || "bottom") : "bottom"
@@ -101,7 +102,11 @@ BarWidget {
     minSend:       { en: "Minimize on send", no: "Minimer ved sending", sv: "Minimera vid sändning", da: "Minimer ved afsendelse", de: "Beim Senden minimieren", fr: "Réduire à l'envoi", es: "Minimizar al enviar", pt: "Minimizar ao enviar", it: "Riduci all'invio", pl: "Minimalizuj po wysłaniu", ja: "送信時に最小化", zh: "发送后最小化" },
     minSendSub:    { en: "Hide HUD while thinking & notify when ready", no: "Skjul HUD under analyse og varsle når klar", sv: "Dölj HUD vid analys och avisera när klart", da: "Skjul HUD under analyse og giv besked", de: "HUD ausblenden & bei Antwort benachrichtigen", fr: "Masquer le HUD et notifier à la fin", es: "Ocultar HUD y notificar al terminar", pt: "Ocultar HUD e notificar quando pronto", it: "Nascondi HUD e notifica a risposta pronta", pl: "Ukryj HUD i powiadom po zakończeniu", ja: "解析中は最小化し完了時に通知", zh: "分析时隐藏窗口并在完成后通知" },
     autoScan:      { en: "Auto-analyze on capture", no: "Auto-analyser ved skjermbilde", sv: "Auto-analysera vid fångst", da: "Auto-analysér ved optagelse", de: "Sofort automatisch analysieren", fr: "Analyser auto à la capture", es: "Analizar automáticamente", pt: "Analisar automaticamente", it: "Analizza automaticamente", pl: "Analizuj automatycznie", ja: "撮影時に自動解析", zh: "截图后自动分析" },
-    autoScanSub:   { en: "Instant summary + auto-generated questions (✦)", no: "Rask oppsummering + autogenererte spørsmål (✦)", sv: "Snabb sammanfattning + autogenererade frågor (✦)", da: "Hurtigt resumé + autogenererede spørgsmål (✦)", de: "Sofort-Zusammenfassung + Rückfragen (✦)", fr: "Résumé immédiat + questions générées (✦)", es: "Resumen al instante + preguntas sugeridas (✦)", pt: "Resumo na hora + perguntas sugeridas (✦)", it: "Riassunto immediato + domande suggerite (✦)", pl: "Szybkie podsumowanie + podpowiedzi pytań (✦)", ja: "即座に要約＋追質問（✦）を自動生成", zh: "即时总结 + 自动生成追问（✦）" },
+    autoScanSub:   { en: "Summary + auto-generated questions (✦)", no: "Oppsummering + autogenererte spørsmål (✦)", sv: "Sammanfattning + autogenererade frågor (✦)", da: "Resumé + autogenererede spørgsmål (✦)", de: "Zusammenfassung + Rückfragen (✦)", fr: "Résumé + questions générées (✦)", es: "Resumen + preguntas sugeridas (✦)", pt: "Resumo + perguntas sugeridas (✦)", it: "Riassunto + domande suggerite (✦)", pl: "Podsumowanie + podpowiedzi pytań (✦)", ja: "要約＋追質問（✦）を自動生成", zh: "总结 + 自动生成追问（✦）" },
+    sysDebug:      { en: "⚠ System Debug (opt-in)", no: "⚠ System Debug (valgfritt)", sv: "⚠ System Debug (valfritt)", da: "⚠ System Debug (valgfrit)", de: "⚠ System-Debug (Opt-in)", fr: "⚠ System Debug (opt-in)", es: "⚠ System Debug (opcional)", pt: "⚠ System Debug (opcional)", it: "⚠ System Debug (opzionale)", pl: "⚠ System Debug (opcja)", ja: "⚠ システムデバッグ（任意）", zh: "⚠ 系统调试（可选）" },
+    sysDebugSub:   { en: "Attach read-only logs & system state", no: "Legg ved lesebeskyttet logg & systemstatus", sv: "Bifoga skrivskyddad logg & systemstatus", da: "Vedhæft skrivebeskyttet log & systemstatus", de: "Schreibgeschützte Logs & Systemstatus anhängen", fr: "Joindre journaux et état en lecture seule", es: "Adjuntar registros y estado de solo lectura", pt: "Anexar logs e estado somente leitura", it: "Allega log e stato di sola lettura", pl: "Dołącz logi i stan systemu (tylko odczyt)", ja: "読み取り専用ログとシステム状態を添付", zh: "附加只读系统日志与状态快照" },
+    sysDebugWarn:  { en: "Read-only diagnostics (journalctl errors, failed units, Hyprland, memory/disk) are sent with your screenshot. No env vars, no keys, never runs commands automatically.", no: "Lesebeskyttet diagnostikk (journalctl-feil, feilede tjenester, Hyprland, minne/disk) legges ved skjermbildet. Ingen nøkler eller env-variabler — kjører aldri kommandoer automatisk.", sv: "Skrivskyddad diagnostik (journalctl-fel, misslyckade tjänster, Hyprland, minne/disk) bifogas. Inga nycklar eller env-variabler — kör aldrig kommandon automatiskt.", da: "Skrivebeskyttet diagnostik (journalctl-fejl, fejlede tjenester, Hyprland, hukommelse/disk) vedhæftes. Ingen nøgler eller env-variabler — kører aldrig kommandoer automatisk.", de: "Nur-Lese-Diagnose (journalctl-Fehler, fehlgeschlagene Units, Hyprland, RAM/Disk) wird angehängt. Keine Keys/Env-Vars, führt nie Befehle automatisch aus.", fr: "Diagnostic en lecture seule (journalctl, unités en échec, Hyprland, RAM/disque) joint à la capture. Aucune clé/env, aucune exécution automatique.", es: "Diagnóstico de solo lectura (errores journalctl, unidades fallidas, Hyprland, RAM/disco) adjunto. Sin claves ni env, nunca ejecuta comandos.", pt: "Diagnóstico somente leitura (erros journalctl, unidades com falha, Hyprland, RAM/disco) anexado. Sem chaves/env, nunca executa comandos.", it: "Diagnostica in sola lettura (errori journalctl, unità fallite, Hyprland, RAM/disco) allegata. Nessuna chiave/env, mai comandi automatici.", pl: "Diagnostyka tylko do odczytu (błędy journalctl, nieudane usługi, Hyprland, RAM/dysk). Bez kluczy/env, nigdy nie uruchamia poleceń automatycznie.", ja: "読み取り専用の診断情報（journalctlエラー、失敗ユニット、Hyprland、メモリ/ディスク）を添付します。キーや環境変数は含まず、自動実行もしません。", zh: "随截图附加只读诊断信息（journalctl 错误、失败服务、Hyprland、内存/磁盘）。不包含密钥或环境变量，绝不自动执行命令。" },
+    tipSysDebug:   { en: "Opt-in troubleshooting: attaches a bounded ~8 KB read-only snapshot (recent journalctl errors, failed units, Hyprland state, disk/RAM) so AI can diagnose real system issues. Zero sudo, zero secrets, never executes commands.", no: "Valgfri feilsøking: legger ved et avgrenset ~8 KB read-only snapshot (siste journalctl-feil, feilede tjenester, Hyprland-status, disk/RAM) så AI finner ekte systemårsaker. Null sudo, null hemmeligheter, kjører aldri kommandoer.", sv: "Valfri felsökning: bifogar en ~8 KB skrivskyddad ögonblicksbild (journalctl-fel, tjänster, Hyprland, disk/RAM). Ingen sudo, inga hemligheter, kör aldrig kommandon.", da: "Valgfri fejlfinding: vedhæfter et ~8 KB skrivebeskyttet snapshot (journalctl-fejl, tjenester, Hyprland, disk/RAM). Ingen sudo, ingen hemmeligheder, kører aldrig kommandoer.", de: "Optionale Fehlersuche: hängt einen ~8 KB Nur-Lese-Snapshot an (journalctl, Units, Hyprland, RAM/Disk). Kein sudo, keine Geheimnisse, keine automatische Ausführung.", fr: "Dépannage opt-in : joint un instantané lecture seule (~8 Ko : journalctl, unités, Hyprland, RAM/disque). Sans sudo, sans secrets, sans exécution automatique.", es: "Diagnóstico opcional: adjunta una instantánea de solo lectura (~8 KB: journalctl, unidades, Hyprland, RAM/disco). Sin sudo, sin secretos, sin ejecución automática.", pt: "Solução de problemas opcional: anexa um snapshot somente leitura (~8 KB: journalctl, unidades, Hyprland, RAM/disco). Sem sudo, sem segredos, sem execução automática.", it: "Debug opzionale: allega uno snapshot in sola lettura (~8 KB: journalctl, unità, Hyprland, RAM/disco). Zero sudo, zero segreti, nessuna esecuzione automatica.", pl: "Opcjonalna diagnostyka: dołącza migawkę tylko do odczytu (~8 KB: journalctl, usługi, Hyprland, RAM/dysk). Bez sudo, bez sekretów, bez automatycznego uruchamiania.", ja: "任意のトラブルシューティング：約8KBの読み取り専用スナップショット（journalctl、失敗ユニット、Hyprland、メモリ/ディスク）を添付します。sudo・機密情報・自動実行なし。", zh: "可选故障排查：附加约 8 KB 只读快照（journalctl 错误、失败服务、Hyprland、磁盘/内存）。无 sudo、无密钥、绝不自动执行命令。" },
     noActiveModels:{ en: "No active AI providers — click to add an API key below", no: "Ingen aktive AI-tilbydere — klikk for å legge inn API-nøkkel under", sv: "Inga aktiva AI-leverantörer — klicka för att lägga till API-nyckel", da: "Ingen aktive AI-udbydere — klik for at tilføje en API-nøgle", de: "Keine aktiven KI-Anbieter — klicken für API-Key-Setup", fr: "Aucun fournisseur IA actif — cliquez pour ajouter une clé API", es: "Sin proveedores de IA activos — haz clic para añadir una clave API", pt: "Nenhum provedor de IA ativo — clique para adicionar uma chave API", it: "Nessun provider IA attivo — clicca per aggiungere una chiave API", pl: "Brak aktywnych dostawców AI — kliknij, aby dodać klucz API", ja: "有効なAIプロバイダーなし — クリックしてAPIキーを設定", zh: "暂无已启用的 AI 服务商 — 点击下方配置 API 密钥" },
     stealth:       { en: "Stealth mode", no: "Stillemodus (Stealth)", sv: "Tyst läge (Stealth)", da: "Stilletilstand (Stealth)", de: "Still-Modus (Stealth)", fr: "Mode discret (Stealth)", es: "Modo sigilo (Stealth)", pt: "Modo discreto (Stealth)", it: "Modalità silenziosa", pl: "Tryb cichy (Stealth)", ja: "ステルスモード", zh: "静默模式" },
     reason:        { en: "Show visual reasoning", no: "Vis resonnering", sv: "Visa resonemang", da: "Vis ræsonnement", de: "Begründung anzeigen", fr: "Afficher le raisonnement", es: "Mostrar razonamiento", pt: "Mostrar raciocínio", it: "Mostra ragionamento", pl: "Pokaż tok myślenia", ja: "推論の根拠を表示", zh: "显示视觉推理" },
@@ -206,6 +211,8 @@ BarWidget {
     property string subtitle: ""
     property string tip: ""
     property bool checked: false
+    property bool warnTone: false
+    readonly property color activeCol: warnTone ? Commons.Color.urgent : Commons.Color.accent
     signal toggled()
 
     width: parent.width
@@ -225,7 +232,7 @@ BarWidget {
       PlainText {
         width: parent.width
         text: tRow.title
-        color: root.fg
+        color: tRow.warnTone && tRow.checked ? Commons.Color.urgent : root.fg
         font.family: root.face
         font.pixelSize: Style.font.caption
         font.bold: tRow.checked
@@ -250,9 +257,9 @@ BarWidget {
       width: Style.space(32)
       height: Style.space(18)
       radius: height / 2
-      color: tRow.checked ? Util.alpha(Commons.Color.accent, 0.35) : Util.alpha(root.fg, 0.12)
+      color: tRow.checked ? Util.alpha(tRow.activeCol, 0.35) : Util.alpha(root.fg, 0.12)
       border.width: 1
-      border.color: tRow.checked ? Commons.Color.accent : root.line
+      border.color: tRow.checked ? tRow.activeCol : root.line
       Behavior on color { ColorAnimation { duration: Style.duration(140) } }
 
       Rectangle {
@@ -261,7 +268,7 @@ BarWidget {
         radius: width / 2
         anchors.verticalCenter: parent.verticalCenter
         x: tRow.checked ? parent.width - width - Style.space(3) : Style.space(3)
-        color: tRow.checked ? Commons.Color.accent : root.dim
+        color: tRow.checked ? tRow.activeCol : root.dim
         Behavior on x { NumberAnimation { duration: Style.duration(140); easing.type: Easing.OutCubic } }
       }
     }
@@ -411,23 +418,21 @@ BarWidget {
     bar: root.bar
     open: root.opened
     focusTarget: popoutKeys
-    contentWidth: popout.fittedContentWidth(Style.space(356))
-    contentHeight: popout.fittedContentHeight(popoutCol.implicitHeight)
+    contentWidth: popout.fittedContentWidth(Style.space(376))
+    contentHeight: popout.fittedContentHeight(popoutHeader.height + Style.space(10) + popoutCol.implicitHeight + Style.space(10) + hoverFooter.height)
 
     FocusScope {
       id: popoutKeys
       anchors.fill: parent
       Keys.onEscapePressed: root.close()
 
-      Column {
-        id: popoutCol
-        width: parent.width
-        spacing: Style.space(10)
-
-        // 1. POPOUT HEADER — Variant 5A Transparent Theme-Native Wordmark ([A-Eye] ✦ EYE | AI VISION)
-        Item {
-          width: parent.width
-          height: Style.space(34)
+      // 1. PINNED TOP HEADER — Variant 5A Transparent Theme-Native Wordmark ([A-Eye] ✦ EYE | AI VISION)
+      Item {
+        id: popoutHeader
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Style.space(34)
 
           Item {
             id: brandWordmark
@@ -547,13 +552,33 @@ BarWidget {
             }
           }
 
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            acceptedButtons: Qt.NoButton
-            onContainsMouseChanged: root.setPopoutHover(containsMouse, root.barTooltip)
-          }
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          acceptedButtons: Qt.NoButton
+          onContainsMouseChanged: root.setPopoutHover(containsMouse, root.barTooltip)
         }
+      }
+
+      // 2-6. SCROLLABLE MIDDLE BODY (auto-yields height to pinned header & hover footer so nothing clips)
+      Flickable {
+        id: popoutScroll
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: popoutHeader.bottom
+        anchors.topMargin: Style.space(10)
+        anchors.bottom: hoverFooter.top
+        anchors.bottomMargin: Style.space(10)
+        contentWidth: width
+        contentHeight: popoutCol.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height + 2
+
+        Column {
+          id: popoutCol
+          width: popoutScroll.width - (popoutScroll.contentHeight > popoutScroll.height + 2 ? Style.space(8) : 0)
+          spacing: Style.space(10)
 
         // 2. QUICK ACTIONS
         Row {
@@ -859,6 +884,36 @@ BarWidget {
             onToggled: if (root.svc) root.svc.requestSetShowReason(!root.showReason)
           }
 
+          ToggleRow {
+            title: root.t("sysDebug")
+            subtitle: root.t("sysDebugSub")
+            tip: root.t("tipSysDebug")
+            warnTone: true
+            checked: root.systemDebug
+            onToggled: if (root.svc) root.svc.requestSetSystemDebug(!root.systemDebug)
+          }
+
+          Rectangle {
+            visible: root.systemDebug
+            width: parent.width
+            height: visible ? sysDebugWarnLbl.implicitHeight + Style.space(12) : 0
+            radius: Style.space(7)
+            color: Util.alpha(Commons.Color.urgent, 0.10)
+            border.width: 1
+            border.color: Util.alpha(Commons.Color.urgent, 0.45)
+
+            PlainText {
+              id: sysDebugWarnLbl
+              anchors.centerIn: parent
+              width: parent.width - Style.space(14)
+              text: root.t("sysDebugWarn")
+              color: root.fg
+              font.family: root.face
+              font.pixelSize: Math.max(9, Style.font.caption - 2)
+              wrapMode: Text.WordWrap
+            }
+          }
+
           // HUD Placement & Hyprland Tiling Mode
           Column {
             width: parent.width
@@ -929,7 +984,7 @@ BarWidget {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              text: "🌐  " + root.t("language")
+              text: "◎  " + root.t("language")
               color: root.fg
               font.family: root.face
               font.pixelSize: Style.font.caption
@@ -988,7 +1043,7 @@ BarWidget {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(6)
               anchors.verticalCenter: parent.verticalCenter
-              text: (root.keysExpanded ? "▾  " : "▸  ") + "🔑 " + root.t("apiSec")
+              text: (root.keysExpanded ? "▾  " : "▸  ") + "◈ " + root.t("apiSec")
               color: root.fg
               font.family: root.face
               font.pixelSize: Style.font.caption
@@ -1331,28 +1386,43 @@ BarWidget {
             }
           }
         }
+        }
 
-        // 7. LIVE HOVER HINT FOOTER
+        // Subtle scrollbar indicator when popout content scrolls
         Rectangle {
-          width: parent.width
-          height: Math.max(Style.space(26), hintLbl.implicitHeight + Style.space(10))
-          radius: Style.space(7)
-          color: root.hoverTip !== "" ? Util.alpha(Commons.Color.accent, 0.12) : root.surface
-          border.width: 1
-          border.color: root.hoverTip !== "" ? Util.alpha(Commons.Color.accent, 0.45) : "transparent"
-          Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+          visible: popoutScroll.contentHeight > popoutScroll.height + 2
+          anchors.right: parent.right
+          y: popoutScroll.visibleArea.yPosition * popoutScroll.height
+          width: Style.space(3)
+          height: Math.max(Style.space(22), popoutScroll.visibleArea.heightRatio * popoutScroll.height)
+          radius: width / 2
+          color: Util.alpha(Commons.Color.accent, 0.45)
+        }
+      }
 
-          PlainText {
-            id: hintLbl
-            anchors.centerIn: parent
-            width: parent.width - Style.space(14)
-            text: root.hoverTip !== "" ? ("ⓘ " + root.hoverTip) : root.t("hoverDefault")
-            color: root.hoverTip !== "" ? root.fg : root.dim
-            font.family: root.face
-            font.pixelSize: Math.max(10, Style.font.caption - 1)
-            wrapMode: Text.WordWrap
-            Behavior on color { ColorAnimation { duration: Style.duration(120) } }
-          }
+      // 7. PINNED BOTTOM LIVE HOVER HINT FOOTER (never clipped regardless of popout height)
+      Rectangle {
+        id: hoverFooter
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: Math.max(Style.space(28), hintLbl.implicitHeight + Style.space(12))
+        radius: Style.space(7)
+        color: root.hoverTip !== "" ? Util.alpha(Commons.Color.accent, 0.12) : root.surface
+        border.width: 1
+        border.color: root.hoverTip !== "" ? Util.alpha(Commons.Color.accent, 0.45) : "transparent"
+        Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+
+        PlainText {
+          id: hintLbl
+          anchors.centerIn: parent
+          width: parent.width - Style.space(14)
+          text: root.hoverTip !== "" ? ("ⓘ " + root.hoverTip) : root.t("hoverDefault")
+          color: root.hoverTip !== "" ? root.fg : root.dim
+          font.family: root.face
+          font.pixelSize: Math.max(10, Style.font.caption - 1)
+          wrapMode: Text.WordWrap
+          Behavior on color { ColorAnimation { duration: Style.duration(120) } }
         }
       }
     }

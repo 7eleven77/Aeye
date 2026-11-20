@@ -13,6 +13,7 @@ extract="$root/bin/extract.py"
 annotate="$root/bin/annotate.py"
 vision_api="$root/bin/vision_api.py"
 stream_parser="$root/bin/stream_parser.py"
+export_file="$root/bin/export_file.py"
 runtime_dir="${XDG_RUNTIME_DIR:-/tmp}/aeye-${UID:-$(id -u)}"
 pidfile="$runtime_dir/ask.pid"
 
@@ -66,7 +67,7 @@ ensure_cfg() {
     cp -- "$legacy_cfg" "$cfg"
   fi
   if [[ ! -f $cfg ]]; then
-    printf '%s\n' '{"provider":"agy","model":"gemini-3.8-flash-high","autosend":false,"minimizeOnSend":true,"showReason":false,"watch":false,"lang":"auto","minimalMode":false,"customPrompts":[]}' >"$cfg"
+    printf '%s\n' '{"provider":"agy","model":"gemini-3.8-flash-high","autosend":false,"minimizeOnSend":true,"showReason":false,"watch":false,"lang":"auto","minimalMode":false,"systemDebug":false,"lastSaveDir":"~/Documents","customPrompts":[]}' >"$cfg"
   fi
 }
 
@@ -146,13 +147,53 @@ cmd_config_patch() {
   mv "$tmp" "$cfg"
 }
 
+collect_sysdebug_context() {
+  # Strictly read-only, bounded (~8 KB) system diagnostics snapshot.
+  # Never invokes sudo/pkexec, never dumps env vars, never reads keys or ~/.config.
+  {
+    printf '=== SYSTEM ===\n'
+    uname -srmo 2>/dev/null || true
+    if [[ -r /etc/os-release ]]; then
+      grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release 2>/dev/null || true
+    fi
+    if [[ -r /usr/share/omarchy/version ]]; then
+      printf 'OMARCHY_VERSION=%s\n' "$(head -n 1 /usr/share/omarchy/version 2>/dev/null || true)"
+    fi
+
+    if command -v hyprctl >/dev/null 2>&1; then
+      printf '\n=== HYPRLAND ACTIVE WINDOW ===\n'
+      hyprctl activewindow 2>/dev/null | grep -E '^(Window|	class:|	title:|	initialClass:|	workspace:|	floating:|	fullscreen:|	pid:)' | head -n 12 || true
+      printf '\n=== HYPRLAND MONITORS ===\n'
+      hyprctl monitors 2>/dev/null | grep -E '^(Monitor|	[0-9]+x[0-9]+|	scale:|	active workspace:)' | head -n 12 || true
+    fi
+
+    printf '\n=== FAILED SYSTEMD UNITS ===\n'
+    systemctl --user --failed --no-legend --plain 2>/dev/null | head -n 12 || true
+    systemctl --failed --no-legend --plain 2>/dev/null | head -n 12 || true
+
+    printf '\n=== RECENT USER JOURNAL ERRORS/WARNINGS (last 10m) ===\n'
+    journalctl --user -p warning..err --since "10 minutes ago" -n 35 --no-pager -o short-iso 2>/dev/null || true
+
+    printf '\n=== RECENT SYSTEM JOURNAL ERRORS (last 10m, unprivileged) ===\n'
+    journalctl -p err --since "10 minutes ago" -n 20 --no-pager -o short-iso 2>/dev/null || true
+
+    printf '\n=== MEMORY & DISK ===\n'
+    free -h 2>/dev/null | head -n 3 || true
+    df -h / "$HOME" 2>/dev/null | head -n 4 || true
+  } | head -c 8000
+}
+
 prompt_for() {
-  local mode="$1" follow="$2" prior="$3" reason="${4:-0}" lang has_marks="${6:-0}"
+  local mode="$1" follow="$2" prior="$3" reason="${4:-0}" lang has_marks="${6:-0}" sysdebug="${7:-0}"
   lang="$(resolve_lang "${5:-auto}")"
   local lname rules body
   lname="$(lang_name "$lang")"
 
-  rules="Always reply in ${lname}. Be concrete and concise. Use clean Markdown (bold, bullet points, and fenced code blocks with language tags when showing code or commands). No greeting. Do not guess illegible text. Do not modify files. Only read this single image."
+  if [[ $sysdebug == 1 ]]; then
+    rules="Always reply in ${lname}. Be concrete and concise. Use clean Markdown (bold, bullet points, and fenced code blocks with language tags when showing code or commands). No greeting. Do not guess illegible text. Do not modify files or run commands. Only read shot.png and sysdebug.txt in this directory."
+  else
+    rules="Always reply in ${lname}. Be concrete and concise. Use clean Markdown (bold, bullet points, and fenced code blocks with language tags when showing code or commands). No greeting. Do not guess illegible text. Do not modify files. Only read this single image."
+  fi
   case "$mode" in
     ask)
       body=$'Mode: ask about ambiguity.\nAsk one precise question in '"${lname}"$' about what the screen does not show. Do not solve it yet.'
@@ -169,6 +210,9 @@ prompt_for() {
   esac
 
   printf '%s\n\n%s\n\nThe image is named shot.png in this directory. Read the file.\n' "$rules" "$body"
+  if [[ $sysdebug == 1 ]]; then
+    printf 'System Debug Mode (READ-ONLY): A bounded read-only system diagnostics snapshot is available in sysdebug.txt in this directory (OS, Hyprland window/monitors, failed systemd units, recent journal errors, memory/disk). Read sysdebug.txt, correlate any relevant logs/errors with shot.png, explain the likely root cause, and provide safe copyable terminal commands the user can review and run.\n'
+  fi
   if [[ $has_marks == 1 ]]; then
     printf 'Note: Bright lime-yellow arrows or boxes have been drawn on shot.png by the user to highlight specific areas of interest. Focus your answer on what they point to or enclose.\n'
   fi
@@ -331,12 +375,20 @@ cmd_providers() {
 run_api() {
   local vendor="$1" model="$2" prompt="$3" image="$4" api_key="$5" work="$6"
   local pfile="$work/prompt.txt" kfile="$work/api.key"
-  (umask 077 && printf '%s' "$prompt" >"$pfile" && printf '%s' "$api_key" >"$kfile")
+  (
+    umask 077
+    printf '%s' "$prompt" >"$pfile"
+    if [[ -s "$work/sysdebug.txt" ]]; then
+      printf '\n\n--- sysdebug.txt (read-only system diagnostics) ---\n' >>"$pfile"
+      cat "$work/sysdebug.txt" >>"$pfile"
+    fi
+    printf '%s' "$api_key" >"$kfile"
+  )
   timeout -k 5 75 python3 -B "$vision_api" "$vendor" "$model" "$image" "$pfile" "$kfile"
 }
 
 cmd_ask() {
-  local provider="" model="" mode="explain" image="" follow="" prior="" reason=0 lang="" marks=""
+  local provider="" model="" mode="explain" image="" follow="" prior="" reason=0 lang="" marks="" sysdebug=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --provider) provider="${2:-}"; shift 2 ;;
@@ -348,6 +400,7 @@ cmd_ask() {
       --lang) lang="${2:-}"; shift 2 ;;
       --marks) marks="${2:-}"; shift 2 ;;
       --reason) reason=1; shift ;;
+      --sysdebug) sysdebug=1; shift ;;
       *) fail "unknown argument: $1" ;;
     esac
   done
@@ -384,9 +437,14 @@ cmd_ask() {
       has_marks=1
     fi
   fi
+  if [[ $sysdebug == 1 ]]; then
+    printf 'STEP\tCollecting read-only system diagnostics…\n'
+    collect_sysdebug_context >"$work/sysdebug.txt"
+    chmod 600 "$work/sysdebug.txt" 2>/dev/null || true
+  fi
 
   local prompt vendor manual_key env_key extract_provider="text" code=0
-  prompt="$(prompt_for "$mode" "$follow" "$prior" "$reason" "$lang" "$has_marks")"
+  prompt="$(prompt_for "$mode" "$follow" "$prior" "$reason" "$lang" "$has_marks" "$sysdebug")"
   vendor="$(vendor_for "$provider" "$model")"
   manual_key="$(manual_key_get "$vendor")"
   env_key="$(env_key_get "$vendor")"
@@ -477,6 +535,20 @@ cmd_copy_last() {
   local last="$runtime_dir/last-answer.txt"
   [[ -f $last ]] || exit 0
   wl-copy <"$last" >/dev/null 2>&1 || true
+}
+
+cmd_export_file() {
+  local dest="${1:-}" payload="${2:-}"
+  [[ -n $dest ]] || fail "Missing destination path"
+  if [[ -n $payload ]]; then
+    printf '%s' "$payload" | python3 -B "$export_file" "$dest"
+  else
+    python3 -B "$export_file" "$dest"
+  fi
+}
+
+cmd_sysdebug_preview() {
+  collect_sysdebug_context
 }
 
 cmd_notify_ready() {
@@ -692,7 +764,9 @@ cmd_capture() {
 usage() {
   cat <<'EOF'
 aeye watch
-aeye ask --image <file> [--mode explain|ask|read|user] [--provider agy|grok|openai] [--model <id>] [--lang auto|en|no|sv|da|de|fr|es|pt|it|pl|ja|zh] [--marks <json>] [--follow <text>] [--prior <text>] [--reason]
+aeye ask --image <file> [--mode explain|ask|read|user] [--provider agy|grok|openai] [--model <id>] [--lang auto|en|no|sv|da|de|fr|es|pt|it|pl|ja|zh] [--marks <json>] [--follow <text>] [--prior <text>] [--reason] [--sysdebug]
+aeye export-file <dest-path> [json-payload]
+aeye sysdebug-preview
 aeye crop <file> <WxH+X+Y>
 aeye providers
 aeye key-set <gemini|anthropic|xai|openai> <api-key-or-empty>
@@ -706,6 +780,8 @@ EOF
 case "${1:-}" in
   watch) shift; cmd_watch "$@" ;;
   ask) shift; cmd_ask "$@" ;;
+  export-file) shift; cmd_export_file "$@" ;;
+  sysdebug-preview) cmd_sysdebug_preview ;;
   crop) shift; cmd_crop "$@" ;;
   providers) cmd_providers ;;
   key-set) shift; cmd_key_set "${1:-}" "${2:-}" ;;

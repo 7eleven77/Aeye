@@ -61,6 +61,13 @@ Item {
   property real tooltipX: 0
   property real tooltipY: 0
   property bool showReason: false
+  property bool systemDebug: false
+  property string lastSaveDir: "~/Documents"
+  property bool saveDrawerOpen: false
+  property string savePathText: ""
+  property string saveStatus: ""
+  property string saveStatusMsg: ""
+  property string lastPromptSent: ""
   property string reasoning: ""
   property string streamStep: ""
   property string streamRaw: ""
@@ -142,7 +149,7 @@ Item {
   readonly property var i18nTable: ({
     scanning:   { en: "SCANNING…", no: "ANALYSERER…", sv: "ANALYSERAR…", da: "ANALYSERER…", de: "ANALYSIERT…", fr: "ANALYSE…", es: "ANALIZANDO…", pt: "ANALISANDO…", it: "ANALISI…", pl: "ANALIZA…", ja: "解析中…", zh: "分析中…" },
     paused:     { en: "PAUSED", no: "PAUSET", sv: "PAUSAD", da: "PAUSET", de: "PAUSIERT", fr: "EN PAUSE", es: "PAUSADO", pt: "PAUSADO", it: "IN PAUSA", pl: "WSTRZYMANO", ja: "一時停止", zh: "已暂停" },
-    answered:   { en: "ANSWER READY", no: "SVAR LEVERT", sv: "SVAR KLART", da: "SVAR KLAR", de: "ANTWORT BEREIT", fr: "RÉPONSE PRÊTE", es: "RESPUESTA LISTA", pt: "RESPOSTA PRONTA", it: "RISPOSTA PRONTA", pl: "GOTOWE", ja: "回答完了", zh: "回答就绪" },
+    answered:   { en: "DONE", no: "KLART", sv: "KLART", da: "KLAR", de: "FERTIG", fr: "PRÊT", es: "LISTO", pt: "PRONTO", it: "PRONTO", pl: "GOTOWE", ja: "完了", zh: "完成" },
     ready:      { en: "READY", no: "KLAR", sv: "REDO", da: "KLAR", de: "BEREIT", fr: "PRÊT", es: "LISTO", pt: "PRONTO", it: "PRONTO", pl: "GOTOWY", ja: "準備完了", zh: "就绪" },
     autoOn:     { en: "AUTO: ON", no: "AUTO: PÅ", sv: "AUTO: PÅ", da: "AUTO: TIL", de: "AUTO: AN", fr: "AUTO: ON", es: "AUTO: SÍ", pt: "AUTO: ON", it: "AUTO: ON", pl: "AUTO: WŁ", ja: "自動: ON", zh: "自动: 开" },
     autoOff:    { en: "AUTO: OFF", no: "AUTO: AV", sv: "AUTO: AV", da: "AUTO: FRA", de: "AUTO: AUS", fr: "AUTO: OFF", es: "AUTO: NO", pt: "AUTO: OFF", it: "AUTO: OFF", pl: "AUTO: WYŁ", ja: "自動: OFF", zh: "自动: 关" },
@@ -166,6 +173,13 @@ Item {
     inspecting: { en: " is inspecting the screenshot…", no: " analyserer skjermbildet…", sv: " analyserar skärmbilden…", da: " analyserer skærmbilledet…", de: " analysiert das Bildschirmfoto…", fr: " analyse la capture d'écran…", es: " está analizando la captura…", pt: " está analisando a captura…", it: " sta analizzando lo screenshot…", pl: " analizuje zrzut ekranu…", ja: " がスクリーンショットを解析中…", zh: " 正在分析截图…" },
     copy:       { en: "Copy", no: "Kopier", sv: "Kopiera", da: "Kopiér", de: "Kopieren", fr: "Copier", es: "Copiar", pt: "Copiar", it: "Copia", pl: "Kopiuj", ja: "コピー", zh: "复制" },
     copied:     { en: "Copied", no: "Kopiert", sv: "Kopierad", da: "Kopieret", de: "Kopiert", fr: "Copié", es: "Copiado", pt: "Copiado", it: "Copiato", pl: "Skopiowano", ja: "コピー済", zh: "已复制" },
+    save:       { en: "Save", no: "Lagre", sv: "Spara", da: "Gem", de: "Speichern", fr: "Enregistrer", es: "Guardar", pt: "Salvar", it: "Salva", pl: "Zapisz", ja: "保存", zh: "保存" },
+    saved:      { en: "Saved", no: "Lagret", sv: "Sparad", da: "Gemt", de: "Gespeichert", fr: "Enregistré", es: "Guardado", pt: "Salvo", it: "Salvato", pl: "Zapisano", ja: "保存済", zh: "已保存" },
+    savePathHint:{ en: "~/Documents/aeye-note.txt (or .md, .pdf, .html, .json, any path…)", no: "~/Documents/aeye-notat.txt (eller .md, .pdf, .html, .json, valgfri sti…)", sv: "~/Documents/aeye-note.txt (eller .md, .pdf, .html, .json…)", da: "~/Documents/aeye-note.txt (eller .md, .pdf, .html, .json…)", de: "~/Documents/aeye-note.txt (oder .md, .pdf, .html, .json…)", fr: "~/Documents/aeye-note.txt (ou .md, .pdf, .html, .json…)", es: "~/Documents/aeye-note.txt (o .md, .pdf, .html, .json…)", pt: "~/Documents/aeye-note.txt (ou .md, .pdf, .html, .json…)", it: "~/Documents/aeye-note.txt (o .md, .pdf, .html, .json…)", pl: "~/Documents/aeye-note.txt (lub .md, .pdf, .html, .json…)", ja: "~/Documents/aeye-note.txt（.md/.pdf/.html/.json等）", zh: "~/Documents/aeye-note.txt（支持 .md/.pdf/.html/.json 或任意路径…）" },
+    tipSave:    { en: "Export answer to any file (.txt, .md, .pdf, .html, .json, or custom path)", no: "Eksporter svaret til valgfri fil (.txt, .md, .pdf, .html, .json eller egen sti)", sv: "Exportera svaret till valfri fil (.txt, .md, .pdf, .html, .json)", da: "Eksportér svaret til valgfri fil (.txt, .md, .pdf, .html, .json)", de: "Antwort in beliebige Datei exportieren (.txt, .md, .pdf, .html, .json)", fr: "Exporter la réponse vers un fichier (.txt, .md, .pdf, .html, .json)", es: "Exportar respuesta a cualquier archivo (.txt, .md, .pdf, .html, .json)", pt: "Exportar resposta para qualquer arquivo (.txt, .md, .pdf, .html, .json)", it: "Esporta la risposta in qualsiasi file (.txt, .md, .pdf, .html, .json)", pl: "Eksportuj odpowiedź do pliku (.txt, .md, .pdf, .html, .json)", ja: "回答を任意のファイル形式で保存（.txt/.md/.pdf/.html/.json）", zh: "导出回答到任意文件（.txt/.md/.pdf/.html/.json 等）" },
+    fixCli:     { en: "Fix in CLI", no: "Fiks i CLI", sv: "Fixa i CLI", da: "Ret i CLI", de: "Im CLI fixen", fr: "Corriger en CLI", es: "Corregir en CLI", pt: "Corrigir no CLI", it: "Risolvi in CLI", pl: "Napraw w CLI", ja: "CLIで修正", zh: "在 CLI 中修复" },
+    tipFixCli:  { en: "Hand off screenshot + System Debug diagnosis to interactive omarchy-agent to review and apply fixes", no: "Send skjermbildet og System Debug-analysen til interaktiv omarchy-agent for å gå gjennom og fikse", sv: "Skicka diagnosen till interaktiv omarchy-agent för åtgärd", da: "Send diagnosen til interaktiv omarchy-agent til rettelse", de: "Diagnose an interaktiven omarchy-agent zur Behebung übergeben", fr: "Transférer le diagnostic vers omarchy-agent pour corriger", es: "Enviar diagnóstico a omarchy-agent para revisar y corregir", pt: "Enviar diagnóstico para omarchy-agent revisar e corrigir", it: "Invia diagnosi a omarchy-agent per applicare le correzioni", pl: "Przekaż diagnozę do interaktywnego omarchy-agent", ja: "診断結果を対話型 omarchy-agent に渡して修正する", zh: "将截图和诊断交接给交互式 omarchy-agent 审查并修复" },
+    tipSysDebugHud: { en: "System Debug ON — read-only diagnostics (journalctl, failed units, Hyprland, disk/RAM) attached. Click to disable.", no: "System Debug PÅ — lesebeskyttet diagnostikk (journalctl, feilede tjenester, Hyprland, disk/RAM) legges ved. Klikk for å slå av.", sv: "System Debug PÅ — skrivskyddad diagnostik bifogas. Klicka för att stänga av.", da: "System Debug TIL — skrivebeskyttet diagnostik vedhæftes. Klik for at slå fra.", de: "System-Debug AN — Nur-Lese-Diagnose wird angehängt. Klicken zum Ausschalten.", fr: "System Debug ON — diagnostic lecture seule joint. Cliquer pour désactiver.", es: "System Debug SÍ — diagnóstico de solo lectura adjunto. Clic para desactivar.", pt: "System Debug ON — diagnóstico somente leitura anexado. Clique para desativar.", it: "System Debug ON — diagnostica sola lettura allegata. Clicca per disattivare.", pl: "System Debug WŁ — diagnostyka tylko do odczytu. Kliknij, aby wyłączyć.", ja: "システムデバッグON — 読み取り専用診断を添付。クリックでOFF。", zh: "系统调试已开启 — 附加只读系统诊断。点击关闭。" },
     pin:        { en: "+ Pin", no: "+ Lagre", sv: "+ Fäst", da: "+ Fastgør", de: "+ Pin", fr: "+ Épingler", es: "+ Fijar", pt: "+ Fixar", it: "+ Fissa", pl: "+ Przypnij", ja: "+ 保存", zh: "+ 固定" },
     send:       { en: "Send", no: "Send", sv: "Skicka", da: "Send", de: "Senden", fr: "Envoyer", es: "Enviar", pt: "Enviar", it: "Invia", pl: "Wyślij", ja: "送信", zh: "发送" },
     placeholder:{ en: "Ask about the screenshot, or type a prompt and click '+ Pin' to save it…", no: "Spør om bildet, eller skriv et eget spørsmål og trykk '+ Lagre'…", sv: "Fråga om bilden, eller skriv en fråga och klicka '+ Fäst'…", da: "Spørg om billedet, eller skriv et spørgsmål og tryk '+ Fastgør'…", de: "Frage zum Bild stellen oder per '+ Pin' als Favorit speichern…", fr: "Posez une question sur l'image ou cliquez sur '+ Épingler'…", es: "Pregunta sobre la captura o haz clic en '+ Fijar' para guardar…", pt: "Pergunte sobre a imagem ou clique em '+ Fixar' para salvar…", it: "Chiedi dell'immagine o clicca su '+ Fissa' per salvare…", pl: "Zapytaj o zrzut ekranu lub kliknij '+ Przypnij', aby zapisać…", ja: "画像について質問するか、入力して「+ 保存」でピン留め…", zh: "询问关于截图的问题，或输入后点击“+ 固定”保存为快捷按钮…" },
@@ -423,6 +437,8 @@ Item {
     if (obj.autosend !== undefined && obj.autosend !== null) autosend = obj.autosend === true
     if (obj.minimizeOnSend !== undefined && obj.minimizeOnSend !== null) minimizeOnSend = obj.minimizeOnSend === true
     if (obj.showReason !== undefined && obj.showReason !== null) showReason = obj.showReason === true
+    if (obj.systemDebug !== undefined && obj.systemDebug !== null) systemDebug = obj.systemDebug === true
+    if (obj.lastSaveDir && String(obj.lastSaveDir).length > 0) lastSaveDir = String(obj.lastSaveDir)
     if (obj.watch !== undefined && obj.watch !== null) watch = obj.watch === true
     if (obj.lang && String(obj.lang).length > 0) lang = String(obj.lang)
     if (obj.minimalMode !== undefined && obj.minimalMode !== null) minimalMode = obj.minimalMode === true
@@ -475,6 +491,11 @@ Item {
   function pickShowReason(on) {
     showReason = on
     saveConfig("showReason", on ? "true" : "false", "bool")
+  }
+
+  function pickSystemDebug(on) {
+    systemDebug = on
+    saveConfig("systemDebug", on ? "true" : "false", "bool")
   }
 
   function pickMinimalMode(on) {
@@ -568,7 +589,7 @@ Item {
     recommendedCategory = ""
     // Single atomic write prevents FileView from reloading half-updated provider/model pairs
     saveConfigPatch({ visionOverride: true, provider: choice.provider, model: choice.id })
-    hint = choice.vendor + " " + choice.label
+    hint = ""
   }
 
   function modelIndex() {
@@ -600,6 +621,96 @@ Item {
     copyProc.running = true
     copiedBlockIdx = idx
     copyResetTimer.restart()
+  }
+
+  function pad2(n) { return n < 10 ? ("0" + n) : String(n) }
+
+  function defaultSavePath(ext) {
+    var d = new Date()
+    var stamp = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + "-" + pad2(d.getHours()) + pad2(d.getMinutes())
+    var dir = String(lastSaveDir || "~/Documents").replace(/\/+$/, "")
+    var suffix = ext || ".txt"
+    return dir + "/aeye-" + stamp + suffix
+  }
+
+  function openSaveDrawer() {
+    saveDrawerOpen = !saveDrawerOpen
+    if (saveDrawerOpen) {
+      saveStatus = ""
+      saveStatusMsg = ""
+      if (savePathText === "") savePathText = defaultSavePath(".txt")
+      Qt.callLater(function() { savePathInput.forceActiveFocus() })
+    }
+  }
+
+  function setSaveFolder(dir) {
+    var cleanDir = String(dir || "~/Documents").replace(/\/+$/, "")
+    if (cleanDir === "") cleanDir = "~"
+    var cur = String(savePathText || "").replace(/^\s+|\s+$/g, "")
+    var base = ""
+    if (cur !== "") {
+      var slash = cur.lastIndexOf("/")
+      base = slash >= 0 ? cur.substring(slash + 1) : cur
+    }
+    if (base === "") {
+      var d = new Date()
+      base = "aeye-" + d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + "-" + pad2(d.getHours()) + pad2(d.getMinutes()) + ".txt"
+    }
+    savePathText = cleanDir + "/" + base
+    lastSaveDir = cleanDir
+    saveConfig("lastSaveDir", cleanDir, "string")
+  }
+
+  function setSaveExtension(ext) {
+    var cur = String(savePathText || defaultSavePath(ext)).replace(/^\s+|\s+$/g, "")
+    var slash = cur.lastIndexOf("/")
+    var dir = slash >= 0 ? cur.substring(0, slash + 1) : ""
+    var fname = slash >= 0 ? cur.substring(slash + 1) : cur
+    if (fname === "") fname = "aeye-note"
+    var dot = fname.lastIndexOf(".")
+    if (dot > 0) fname = fname.substring(0, dot) + ext
+    else fname = fname + ext
+    savePathText = dir + fname
+  }
+
+  function runExportFile() {
+    var dest = String(savePathText || "").replace(/^\s+|\s+$/g, "")
+    if (dest.length === 0 || !answer) return
+    var slash = dest.lastIndexOf("/")
+    if (slash > 0) {
+      var dir = dest.substring(0, slash)
+      if (dir !== "" && dir !== lastSaveDir) {
+        lastSaveDir = dir
+        saveConfig("lastSaveDir", dir, "string")
+      }
+    }
+    var payload = JSON.stringify({
+      model: producerName + " " + modelLabel,
+      prompt: lastPromptSent || "",
+      reasoning: showReason ? (reasoning || "") : "",
+      answer: answer,
+      sysdebug: systemDebug
+    })
+    saveStatus = ""
+    saveStatusMsg = ""
+    if (exportProc.running) exportProc.running = false
+    exportProc.command = [binPath(), "export-file", dest, payload]
+    exportProc.running = true
+  }
+
+  function onExportLine(line) {
+    var s = String(line || "").replace(/\r?\n$/, "")
+    if (s.indexOf("OK\t") === 0) {
+      var savedTo = s.substring(3)
+      var home = String(Quickshell.env("HOME") || "")
+      if (home !== "" && savedTo.indexOf(home) === 0) savedTo = "~" + savedTo.substring(home.length)
+      saveStatus = "ok"
+      saveStatusMsg = t("saved") + ": " + savedTo
+      saveResetTimer.restart()
+    } else if (s.indexOf("ERR\t") === 0) {
+      saveStatus = "err"
+      saveStatusMsg = s.substring(4)
+    }
   }
 
   function escapeHtml(s) {
@@ -1049,15 +1160,18 @@ Item {
 
   function openTerminal() {
     var lines = [
-      "Follow-up session from Aeye.",
+      systemDebug ? "System Debug fix session from Aeye." : "Follow-up session from Aeye.",
       "Agent: " + omarchyAgent,
       "Image: " + imagePath,
       ""
     ]
     if (note) lines.push("Context:\n" + note)
     if (draft) lines.push("Question:\n" + draft)
-    if (answer) lines.push("Previous Answer:\n" + answer)
-    lines.push("Read the image and continue from where the answer left off.")
+    else if (lastPromptSent) lines.push("Question:\n" + lastPromptSent)
+    if (answer) lines.push("Previous Diagnosis / Answer:\n" + answer)
+    lines.push(systemDebug
+      ? "Review the diagnosis and screenshot above, inspect the relevant system state, and ask before applying any system changes."
+      : "Read the image and continue from where the answer left off.")
     var text = lines.join("\n")
     termProc.command = [binPath(), "terminal", text]
     termProc.running = true
@@ -1078,7 +1192,12 @@ Item {
     if (mode !== "read") {
       answer = ""
       errorText = ""
+      saveDrawerOpen = false
+      saveStatus = ""
+      saveStatusMsg = ""
+      savePathText = ""
     }
+    if (follow && String(follow).length > 0) lastPromptSent = String(follow)
     var cmd = [
       binPath(), "ask",
       "--provider", provider,
@@ -1092,6 +1211,7 @@ Item {
       cmd.push(JSON.stringify(marks))
     }
     if (showReason) cmd.push("--reason")
+    if (systemDebug) cmd.push("--sysdebug")
     if (follow && String(follow).length > 0) {
       cmd.push("--follow")
       cmd.push(String(follow))
@@ -1558,6 +1678,22 @@ Item {
   Process { id: notifyProc }
   Process { id: captureProc }
 
+  Timer {
+    id: saveResetTimer
+    interval: 3200
+    onTriggered: {
+      if (root.saveStatus === "ok") {
+        root.saveDrawerOpen = false
+        root.saveStatus = ""
+      }
+    }
+  }
+
+  Process {
+    id: exportProc
+    stdout: SplitParser { onRead: function(line) { root.onExportLine(line) } }
+  }
+
   Process {
     id: cropProc
     stdout: SplitParser { onRead: function(line) { root.onCropLine(line) } }
@@ -1580,6 +1716,8 @@ Item {
   Binding { target: root.service; property: "minimizeOnSend"; value: root.minimizeOnSend; when: root.service !== null }
   Binding { target: root.service; property: "minimalMode"; value: root.minimalMode; when: root.service !== null }
   Binding { target: root.service; property: "showReason"; value: root.showReason; when: root.service !== null }
+  Binding { target: root.service; property: "systemDebug"; value: root.systemDebug; when: root.service !== null }
+  Binding { target: root.service; property: "lastSaveDir"; value: root.lastSaveDir; when: root.service !== null }
   Binding { target: root.service; property: "lang"; value: root.lang; when: root.service !== null }
   Binding { target: root.service; property: "activeLang"; value: root.activeLang; when: root.service !== null }
   Binding { target: root.service; property: "localeDisplayLabel"; value: root.localeDisplayLabel; when: root.service !== null }
@@ -1600,6 +1738,7 @@ Item {
     function onSetMinimizeOnSendRequested(on) { root.pickMinimizeOnSend(on) }
     function onSetMinimalModeRequested(on) { root.pickMinimalMode(on) }
     function onSetShowReasonRequested(on) { root.pickShowReason(on) }
+    function onSetSystemDebugRequested(on) { root.pickSystemDebug(on) }
     function onCycleLocaleRequested(dir) { root.cycleLocale(dir) }
     function onSetHudPlacementRequested(placement) { root.pickHudPlacement(placement) }
     function onAddCustomPromptRequested(phrase) { root.addCustomPromptText(phrase) }
@@ -2049,16 +2188,62 @@ Item {
                   }
                 }
               }
+
+              // Opt-in System Debug indicator pill (visible only when System Debug is enabled)
+              Rectangle {
+                id: sysDebugPill
+                visible: root.systemDebug
+                anchors.verticalCenter: parent.verticalCenter
+                width: visible ? sysDebugRow.implicitWidth + Style.space(14) : 0
+                height: Style.space(26)
+                radius: height / 2
+                color: sysDebugMouse.containsMouse ? Util.alpha(Color.urgent, 0.25) : Util.alpha(Color.urgent, 0.14)
+                border.width: 1
+                border.color: Util.alpha(Color.urgent, 0.75)
+
+                Row {
+                  id: sysDebugRow
+                  anchors.centerIn: parent
+                  spacing: Style.space(4)
+
+                  PlainText {
+                    text: "⚠"
+                    color: Color.urgent
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                  PlainText {
+                    text: "SYSDEBUG"
+                    color: Color.urgent
+                    font.family: root.face
+                    font.pixelSize: Math.max(9, Style.font.caption - 1)
+                    font.bold: true
+                  }
+                }
+
+                MouseArea {
+                  id: sysDebugMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: root.setHover(sysDebugPill, containsMouse, root.t("tipSysDebugHud"))
+                  onClicked: {
+                    root.clearHover()
+                    root.pickSystemDebug(false)
+                  }
+                }
+              }
             }
 
             Row {
               id: rightHeaderRow
               x: root.isDocked ? 0 : Math.max(0, parent.width - width)
               y: root.isDocked ? Style.space(36) : Math.round((parent.height - height) / 2)
-              spacing: Style.space(6)
+              spacing: Style.space(5)
 
               NavButton {
-                icon: root.previewOpen ? "▾" : "🖼"
+                icon: root.previewOpen ? "▾" : "◫"
                 label: root.isDocked ? "" : (root.previewOpen ? root.t("hideImage") : root.t("image"))
                 tip: root.t("tipImage")
                 active: root.previewOpen
@@ -2069,7 +2254,6 @@ Item {
                 icon: "✎"
                 label: root.isDocked ? "Edit" : "Omasnap"
                 tip: root.t("tipOmasnap")
-                accent: true
                 onPressed: root.beginEdit()
               }
 
@@ -2078,6 +2262,15 @@ Item {
                 label: "CLI"
                 tip: root.t("tipCli")
                 onPressed: root.openTerminal()
+              }
+
+              // Clean 1px visual divider between actions and window chrome
+              Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 1
+                height: Style.space(16)
+                color: root.line
+                opacity: 0.7
               }
 
               NavButton {
@@ -2591,16 +2784,220 @@ Item {
                     }
                   }
 
-                  NavButton {
+                  Row {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    height: Style.space(24)
-                    icon: root.copiedFeedback ? "✓" : "⎘"
-                    label: root.copiedFeedback ? root.t("copied") : root.t("copy")
-                    tip: root.t("tipCopy")
-                    active: root.copiedFeedback
-                    customColor: root.colSuccess
-                    onPressed: root.copyAnswer()
+                    spacing: Style.space(6)
+
+                    NavButton {
+                      visible: root.systemDebug
+                      height: Style.space(24)
+                      icon: ">_"
+                      label: root.isDocked ? "" : root.t("fixCli")
+                      tip: root.t("tipFixCli")
+                      customColor: Color.urgent
+                      onPressed: root.openTerminal()
+                    }
+
+                    NavButton {
+                      height: Style.space(24)
+                      icon: root.saveStatus === "ok" ? "✓" : "↓"
+                      label: root.saveStatus === "ok" ? root.t("saved") : root.t("save")
+                      tip: root.t("tipSave")
+                      active: root.saveDrawerOpen || root.saveStatus === "ok"
+                      customColor: root.saveStatus === "ok" ? root.colSuccess : Color.accent
+                      onPressed: root.openSaveDrawer()
+                    }
+
+                    NavButton {
+                      height: Style.space(24)
+                      icon: root.copiedFeedback ? "✓" : "⎘"
+                      label: root.copiedFeedback ? root.t("copied") : root.t("copy")
+                      tip: root.t("tipCopy")
+                      active: root.copiedFeedback
+                      customColor: root.colSuccess
+                      onPressed: root.copyAnswer()
+                    }
+                  }
+                }
+
+                // Inline Universal File Export Drawer (.txt, .md, .pdf, .html, .json, or any custom path)
+                Rectangle {
+                  id: saveDrawer
+                  visible: root.saveDrawerOpen
+                  width: parent.width
+                  height: visible ? saveDrawerCol.implicitHeight + Style.space(14) : 0
+                  radius: Style.space(8)
+                  color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.55)
+                  border.width: 1
+                  border.color: root.saveStatus === "err" ? Color.urgent : (root.saveStatus === "ok" ? root.colSuccess : root.line)
+                  clip: true
+
+                  Column {
+                    id: saveDrawerCol
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Style.space(7)
+                    spacing: Style.space(6)
+
+                    Flow {
+                      width: parent.width
+                      spacing: Style.space(5)
+
+                      Repeater {
+                        model: [
+                          { label: "~/Documents", dir: "~/Documents" },
+                          { label: "~/Desktop",   dir: "~/Desktop" },
+                          { label: "~/Downloads", dir: "~/Downloads" },
+                          { label: "~/",          dir: "~" }
+                        ]
+                        delegate: Rectangle {
+                          required property var modelData
+                          width: dirChipLbl.implicitWidth + Style.space(12)
+                          height: Style.space(22)
+                          radius: Style.space(5)
+                          color: dirChipMouse.containsMouse ? root.surfaceHover : root.surface
+                          border.width: 1
+                          border.color: root.lastSaveDir === modelData.dir ? Color.accent : root.line
+
+                          PlainText {
+                            id: dirChipLbl
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: root.lastSaveDir === modelData.dir ? Color.accent : root.fg
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 2)
+                          }
+                          MouseArea {
+                            id: dirChipMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.setSaveFolder(modelData.dir)
+                          }
+                        }
+                      }
+
+                      Rectangle {
+                        width: 1
+                        height: Style.space(20)
+                        color: root.line
+                        opacity: 0.65
+                      }
+
+                      Repeater {
+                        model: [".txt", ".md", ".pdf", ".html", ".json"]
+                        delegate: Rectangle {
+                          required property string modelData
+                          readonly property bool isCur: root.savePathText.toLowerCase().endsWith(modelData)
+                          width: extChipLbl.implicitWidth + Style.space(12)
+                          height: Style.space(22)
+                          radius: Style.space(5)
+                          color: isCur ? Util.alpha(Color.accent, 0.2) : (extChipMouse.containsMouse ? root.surfaceHover : root.surface)
+                          border.width: 1
+                          border.color: isCur ? Color.accent : root.line
+
+                          PlainText {
+                            id: extChipLbl
+                            anchors.centerIn: parent
+                            text: modelData
+                            color: isCur ? Color.accent : root.fg
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 2)
+                            font.bold: isCur
+                          }
+                          MouseArea {
+                            id: extChipMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.setSaveExtension(modelData)
+                          }
+                        }
+                      }
+                    }
+
+                    Row {
+                      width: parent.width
+                      spacing: Style.space(6)
+
+                      Rectangle {
+                        width: parent.width - saveConfirmBtn.width - Style.space(6)
+                        height: Style.space(28)
+                        radius: Style.space(6)
+                        color: savePathInput.activeFocus ? Util.alpha(root.fg, 0.08) : root.surface
+                        border.width: 1
+                        border.color: savePathInput.activeFocus ? Color.accent : root.line
+
+                        PlainText {
+                          anchors.left: parent.left
+                          anchors.leftMargin: Style.space(8)
+                          anchors.right: parent.right
+                          anchors.rightMargin: Style.space(8)
+                          anchors.verticalCenter: parent.verticalCenter
+                          visible: savePathInput.text.length === 0
+                          text: root.t("savePathHint")
+                          color: root.dim
+                          font.family: root.face
+                          font.pixelSize: Math.max(10, Style.font.caption - 1)
+                          elide: Text.ElideRight
+                        }
+
+                        TextInput {
+                          id: savePathInput
+                          anchors.fill: parent
+                          anchors.leftMargin: Style.space(8)
+                          anchors.rightMargin: Style.space(8)
+                          verticalAlignment: TextInput.AlignVCenter
+                          color: root.fg
+                          font.family: root.face
+                          font.pixelSize: Math.max(10, Style.font.caption - 1)
+                          clip: true
+                          selectByMouse: true
+                          text: root.savePathText
+                          onTextEdited: root.savePathText = text
+                          onAccepted: root.runExportFile()
+                          Keys.onEscapePressed: root.saveDrawerOpen = false
+                        }
+                      }
+
+                      Rectangle {
+                        id: saveConfirmBtn
+                        width: saveConfirmLbl.implicitWidth + Style.space(16)
+                        height: Style.space(28)
+                        radius: Style.space(6)
+                        color: saveConfirmMouse.containsMouse ? Qt.lighter(Color.accent, 1.12) : Color.accent
+
+                        PlainText {
+                          id: saveConfirmLbl
+                          anchors.centerIn: parent
+                          text: root.t("save") + " ↵"
+                          color: Color.background
+                          font.family: root.face
+                          font.pixelSize: Math.max(10, Style.font.caption - 1)
+                          font.bold: true
+                        }
+
+                        MouseArea {
+                          id: saveConfirmMouse
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: root.runExportFile()
+                        }
+                      }
+                    }
+
+                    PlainText {
+                      visible: root.saveStatusMsg !== ""
+                      width: parent.width
+                      text: (root.saveStatus === "ok" ? "✓ " : "⚠ ") + root.saveStatusMsg
+                      color: root.saveStatus === "ok" ? root.colSuccess : Color.urgent
+                      font.family: root.face
+                      font.pixelSize: Math.max(9, Style.font.caption - 1)
+                      elide: Text.ElideMiddle
+                    }
                   }
                 }
 

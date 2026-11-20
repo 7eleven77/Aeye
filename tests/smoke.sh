@@ -13,7 +13,7 @@ echo "Running Aeye smoke tests in $ROOT"
 
 # 1. Shell & Python syntax
 bash -n "$ROOT/bin/aeye" && ok "bash -n bin/aeye" || fail "bash -n bin/aeye"
-python3 -B -m py_compile "$ROOT/bin/vision_api.py" "$ROOT/bin/annotate.py" "$ROOT/bin/extract.py" "$ROOT/bin/stream_parser.py" \
+python3 -B -m py_compile "$ROOT/bin/vision_api.py" "$ROOT/bin/annotate.py" "$ROOT/bin/extract.py" "$ROOT/bin/stream_parser.py" "$ROOT/bin/export_file.py" \
   && ok "python3 py_compile bin/*.py" || fail "python3 py_compile bin/*.py"
 
 # 2. Manifest & Omarchy plugin validator
@@ -62,7 +62,41 @@ if command -v wl-copy >/dev/null 2>&1 && command -v wl-paste >/dev/null 2>&1 && 
     && ok "aeye copy handles leading-dash Markdown" || fail "aeye copy leading-dash Markdown (got: $got_clip)"
 fi
 
-# 7. QML compliance checks (PlainText, Style.duration, zero hardcoded UI chrome hex colors)
+# 7. Universal file export (.txt, .md, .pdf with Unicode symbols, .html, .json, custom ext, system path guard)
+export_payload='{"model":"Gemini Flash","prompt":"Fix this — error • æøå","reasoning":"∴ Looked at line 40 → `items.reduce`","answer":"# Fix\n\n- Use `items.data.reduce(...)` — not `items.reduce(...)`.\n- Norwegian test: æøåÆØÅ · “smart quotes” · ✦\n\n```ts\nconst total = items.data.reduce((s, i) => s + i.amount, 0);\n```"}'
+
+for ext in txt md pdf html json log; do
+  res="$("$ROOT/bin/aeye" export-file "$tmp_dir/sub/report.$ext" "$export_payload")"
+  if [[ $res == OK$'\t'* && -s "$tmp_dir/sub/report.$ext" ]]; then
+    ok "aeye export-file .$ext"
+  else
+    fail "aeye export-file .$ext (got: $res)"
+  fi
+done
+
+if head -c 8 "$tmp_dir/sub/report.pdf" | grep -q '^%PDF-1.4'; then
+  ok "export-file .pdf valid PDF-1.4 header + Unicode safe"
+else
+  fail "export-file .pdf invalid header"
+fi
+
+guard_res="$("$ROOT/bin/aeye" export-file "/etc/aeye-smoke-should-fail.txt" "$export_payload")"
+if [[ $guard_res == ERR$'\t'* ]]; then
+  ok "export-file blocks protected system paths (/etc)"
+else
+  fail "export-file failed to block /etc (got: $guard_res)"
+fi
+
+# 8. Opt-in System Debug read-only snapshot safety & size bound
+sysdbg_out="$(AEYE_CANARY_SECRET="DO_NOT_LEAK_9911" "$ROOT/bin/aeye" sysdebug-preview)"
+sysdbg_bytes="${#sysdbg_out}"
+if [[ $sysdbg_out == *"=== SYSTEM ==="* && $sysdbg_bytes -le 8200 && $sysdbg_out != *"DO_NOT_LEAK_9911"* ]]; then
+  ok "sysdebug-preview bounded (${sysdbg_bytes}B), read-only, zero env leaks"
+else
+  fail "sysdebug-preview failed safety/bound check (${sysdbg_bytes}B)"
+fi
+
+# 9. QML compliance checks (PlainText, Style.duration, zero hardcoded UI chrome hex colors)
 if grep -rnE '^\s*Text\s*\{' "$ROOT/Panel.qml" "$ROOT/BarWidget.qml" "$ROOT/Service.qml" >/dev/null; then
   fail "Bare Text {} found (must use PlainText)"
 else

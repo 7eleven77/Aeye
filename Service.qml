@@ -34,6 +34,8 @@ QtObject {
   property bool minimizeOnSend: true
   property bool minimalMode: false
   property bool showReason: false
+  property bool systemDebug: false
+  property string lastSaveDir: "~/Documents"
   property string lang: "auto"
   property string activeLang: "en"
   property string localeDisplayLabel: "Auto (EN)"
@@ -51,6 +53,7 @@ QtObject {
   signal setMinimizeOnSendRequested(bool on)
   signal setMinimalModeRequested(bool on)
   signal setShowReasonRequested(bool on)
+  signal setSystemDebugRequested(bool on)
   signal cycleLocaleRequested(int dir)
   signal setHudPlacementRequested(string placement)
   signal addCustomPromptRequested(string phrase)
@@ -67,6 +70,7 @@ QtObject {
   function requestSetMinimizeOnSend(on) { setMinimizeOnSendRequested(on) }
   function requestSetMinimalMode(on) { setMinimalModeRequested(on) }
   function requestSetShowReason(on) { setShowReasonRequested(on) }
+  function requestSetSystemDebug(on) { setSystemDebugRequested(on) }
   function requestCycleLocale(dir) { cycleLocaleRequested(dir) }
   function requestSetHudPlacement(placement) { setHudPlacementRequested(placement) }
   function requestAddCustomPrompt(phrase) { addCustomPromptRequested(phrase) }
