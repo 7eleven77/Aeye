@@ -1985,7 +1985,7 @@ Item {
                 font.pixelSize: Style.font.caption
               }
 
-              // Variant 5A Transparent Theme-Native Wordmark ([A-Eye] ✦ EYE)
+              // Theme-native orb wordmark (orb + Aeye)
               Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: hudWmRow.implicitWidth
@@ -2014,54 +2014,47 @@ Item {
                       var s = width / 100.0
                       ctx.save()
                       ctx.scale(s, s)
-                      ctx.lineCap = "round"
-                      ctx.lineJoin = "round"
-                      ctx.strokeStyle = colA
-                      ctx.lineWidth = 7.2
+                      // glass orb
+                      var g = ctx.createRadialGradient(40, 36, 4, 50, 50, 46)
+                      g.addColorStop(0, Qt.lighter(colA, 1.5)); g.addColorStop(0.6, colA); g.addColorStop(1, Qt.darker(colA, 1.9))
+                      ctx.fillStyle = g
+                      ctx.beginPath(); ctx.arc(50, 50, 44, 0, Math.PI * 2); ctx.fill()
+                      // almond lens
+                      ctx.fillStyle = Qt.rgba(1, 1, 1, 0.16)
+                      ctx.strokeStyle = Qt.rgba(1, 1, 1, 0.45)
+                      ctx.lineWidth = 1.6
                       ctx.beginPath()
-                      ctx.moveTo(35, 42); ctx.lineTo(50, 15); ctx.lineTo(65, 42)
-                      ctx.moveTo(27, 68); ctx.lineTo(19, 85)
-                      ctx.moveTo(73, 68); ctx.lineTo(81, 85)
-                      ctx.stroke()
-                      ctx.strokeStyle = colEye
-                      ctx.lineWidth = 6.0
-                      ctx.beginPath()
-                      ctx.moveTo(16, 55)
-                      ctx.bezierCurveTo(28, 39, 38.5, 35.5, 50, 35.5)
-                      ctx.bezierCurveTo(61.5, 35.5, 72, 39, 84, 55)
-                      ctx.bezierCurveTo(72, 71, 61.5, 74.5, 50, 74.5)
-                      ctx.bezierCurveTo(38.5, 74.5, 28, 71, 16, 55)
-                      ctx.closePath()
-                      ctx.stroke()
+                      ctx.moveTo(6, 50)
+                      ctx.bezierCurveTo(22, 28, 36, 22, 50, 22)
+                      ctx.bezierCurveTo(64, 22, 78, 28, 94, 50)
+                      ctx.bezierCurveTo(78, 72, 64, 78, 50, 78)
+                      ctx.bezierCurveTo(36, 78, 22, 72, 6, 50)
+                      ctx.closePath(); ctx.fill(); ctx.stroke()
+                      // iris + pupil
                       ctx.fillStyle = colSpark
+                      ctx.beginPath(); ctx.arc(50, 50, 25, 0, Math.PI * 2); ctx.fill()
+                      ctx.fillStyle = Qt.rgba(0.02, 0.04, 0.1, 0.92)
+                      ctx.beginPath(); ctx.arc(50, 50, 14, 0, Math.PI * 2); ctx.fill()
+                      // spark
+                      ctx.fillStyle = Qt.rgba(1, 1, 1, 1)
                       ctx.beginPath()
-                      ctx.moveTo(50, 40.5); ctx.lineTo(53.4, 51.6); ctx.lineTo(64.5, 55)
-                      ctx.lineTo(53.4, 58.4); ctx.lineTo(50, 69.5); ctx.lineTo(46.6, 58.4)
-                      ctx.lineTo(35.5, 55); ctx.lineTo(46.6, 51.6)
-                      ctx.closePath()
-                      ctx.fill()
+                      ctx.moveTo(50, 37); ctx.lineTo(53, 47); ctx.lineTo(63, 50); ctx.lineTo(53, 53)
+                      ctx.lineTo(50, 63); ctx.lineTo(47, 53); ctx.lineTo(37, 50); ctx.lineTo(47, 47)
+                      ctx.closePath(); ctx.fill()
                       ctx.restore()
                     }
                   }
 
-                  PlainText {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "✦"
-                    color: root.colAnalysing
-                    font.family: root.face
-                    font.pixelSize: Math.max(9, Style.font.caption - 1)
-                    font.bold: true
-                  }
 
                   PlainText {
                     id: hudEyeWord
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "EYE"
+                    text: "Aeye"
                     color: root.fg
                     font.family: root.face
                     font.pixelSize: Math.round(Style.font.body * 1.15)
                     font.bold: true
-                    font.letterSpacing: 2.2
+                    font.letterSpacing: 0.4
                   }
                 }
 

@@ -1,19 +1,46 @@
-<svg viewBox="0 0 265 62" xmlns="http://www.w3.org/2000/svg">
-  <!-- Variant D A-Eye mark acting directly as the letter A (transparent background) -->
-  <g transform="translate(4, 3) scale(0.56)">
-    <path d="M 35 42 L 50 15 L 65 42" fill="none" stroke="#7aa2f7" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <line x1="27" y1="68" x2="19" y2="85" stroke="#7aa2f7" stroke-width="7.2" stroke-linecap="round"/>
-    <line x1="73" y1="68" x2="81" y2="85" stroke="#7aa2f7" stroke-width="7.2" stroke-linecap="round"/>
-    <path d="M 16 55 C 28 39 38.5 35.5 50 35.5 C 61.5 35.5 72 39 84 55 C 72 71 61.5 74.5 50 74.5 C 38.5 74.5 28 71 16 55 Z" fill="none" stroke="#eef4ff" stroke-width="6" stroke-linejoin="round"/>
-    <path d="M 50 40.5 L 53.4 51.6 L 64.5 55 L 53.4 58.4 L 50 69.5 L 46.6 58.4 L 35.5 55 L 46.6 51.6 Z" fill="#f59e0b"/>
+<svg viewBox="0 0 250 64" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(0,0) scale(0.64)">
+      <rect x="4" y="4" width="92" height="92" rx="23" fill="url(#bg)" stroke="#2a3a66" stroke-width="1"/>
+      <circle cx="50" cy="50" r="44" fill="url(#glow)"/>
+      <circle cx="50" cy="50" r="32" fill="url(#orb)"/>
+      <path d="M18.5 50C30 36 40 31 50 31C60 31 70 36 81.5 50C70 64 60 69 50 69C40 69 30 64 18.5 50Z" fill="#9fd8ff" fill-opacity="0.22" stroke="#cfeaff" stroke-opacity="0.45" stroke-width="0.8"/>
+      <circle cx="50" cy="50" r="19" fill="url(#iris)"/>
+      <circle cx="50" cy="50" r="10.5" fill="url(#pupil)"/>
+      <circle cx="50" cy="50" r="32" fill="none" stroke="url(#rim)" stroke-width="1.6"/>
+      <path d="M50 41.5L52.2 47.8L58.5 50L52.2 52.2L50 58.5L47.8 52.2L41.5 50L47.8 47.8Z" fill="#fff"/>
+      <ellipse cx="40" cy="36" rx="10" ry="4.5" fill="#fff" fill-opacity="0.18" transform="rotate(-28 40 36)" filter="url(#blur)"/>
   </g>
-  <!-- Spark divider -->
-  <path d="M 70 23 L 72 29 L 78 31 L 72 33 L 70 39 L 68 33 L 62 31 L 68 29 Z" fill="#f59e0b"/>
-  <!-- EYE -->
-  <text x="86" y="44" fill="#eef4ff" font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="800" font-size="34" letter-spacing="5">EYE</text>
-  <!-- Accent underline -->
-  <line x1="14" y1="53" x2="180" y2="53" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
-  <!-- AI VISION stamp -->
-  <text x="192" y="34" fill="#94a3b8" font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" font-size="12" letter-spacing="2.2">AI</text>
-  <text x="192" y="48" fill="#94a3b8" font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="600" font-size="10.5" letter-spacing="1.6">VISION</text>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101a36"/>
+      <stop offset="1" stop-color="#060b1c"/>
+    </linearGradient>
+    <radialGradient id="orb" cx="42%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#6aa8ff" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#2f6bff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2a1a8f" stop-opacity="0.95"/>
+    </radialGradient>
+    <radialGradient id="iris" cx="55%" cy="62%" r="60%">
+      <stop offset="0" stop-color="#19f0ff"/>
+      <stop offset="0.6" stop-color="#1d8bff"/>
+      <stop offset="1" stop-color="#4b3bd6"/>
+    </radialGradient>
+    <radialGradient id="pupil" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#050a1a"/>
+      <stop offset="1" stop-color="#0a1230"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0.15" y1="1" x2="0.95" y2="0">
+      <stop offset="0" stop-color="#8fd8ff" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#bfe6ff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ffd98a" stop-opacity="1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#2f8bff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#2f8bff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="1.6"/></filter>
+  </defs>
+  <text x="76" y="43" fill="#eef4ff" font-family="Inter, system-ui, sans-serif" font-weight="800" font-size="36" letter-spacing="-1">Aeye</text>
+  <text x="170" y="31" fill="#94a3b8" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="10" letter-spacing="2">AI</text>
+  <text x="170" y="44" fill="#94a3b8" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="9" letter-spacing="1.6">VISION</text>
 </svg>

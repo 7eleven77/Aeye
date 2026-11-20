@@ -326,12 +326,10 @@ BarWidget {
             ctx.lineCap = "round"
             ctx.lineJoin = "round"
             ctx.beginPath()
-            ctx.moveTo(2, 12)
-            ctx.bezierCurveTo(5, 6.8, 8.5, 5, 12, 5)
-            ctx.bezierCurveTo(15.5, 5, 19, 6.8, 22, 12)
-            ctx.bezierCurveTo(19, 17.2, 15.5, 19, 12, 19)
-            ctx.bezierCurveTo(8.5, 19, 5, 17.2, 2, 12)
-            ctx.closePath()
+            ctx.moveTo(3, 8.5); ctx.lineTo(3, 5.5); ctx.quadraticCurveTo(3, 3, 5.5, 3); ctx.lineTo(8.5, 3)
+            ctx.moveTo(15.5, 3); ctx.lineTo(18.5, 3); ctx.quadraticCurveTo(21, 3, 21, 5.5); ctx.lineTo(21, 8.5)
+            ctx.moveTo(21, 15.5); ctx.lineTo(21, 18.5); ctx.quadraticCurveTo(21, 21, 18.5, 21); ctx.lineTo(15.5, 21)
+            ctx.moveTo(8.5, 21); ctx.lineTo(5.5, 21); ctx.quadraticCurveTo(3, 21, 3, 18.5); ctx.lineTo(3, 15.5)
             ctx.stroke()
             ctx.restore()
           }
@@ -349,14 +347,14 @@ BarWidget {
             ctx.scale(s, s)
             ctx.fillStyle = iconRoot.strokeCol
             ctx.beginPath()
-            ctx.moveTo(12, 7.1)
-            ctx.lineTo(13.3, 10.7)
-            ctx.lineTo(16.9, 12)
-            ctx.lineTo(13.3, 13.3)
-            ctx.lineTo(12, 16.9)
-            ctx.lineTo(10.7, 13.3)
-            ctx.lineTo(7.1, 12)
-            ctx.lineTo(10.7, 10.7)
+            ctx.moveTo(12, 6.2)
+            ctx.lineTo(13.6, 10.4)
+            ctx.lineTo(17.8, 12)
+            ctx.lineTo(13.6, 13.6)
+            ctx.lineTo(12, 17.8)
+            ctx.lineTo(10.4, 13.6)
+            ctx.lineTo(6.2, 12)
+            ctx.lineTo(10.4, 10.4)
             ctx.closePath()
             ctx.fill()
             ctx.restore()
@@ -426,7 +424,7 @@ BarWidget {
       anchors.fill: parent
       Keys.onEscapePressed: root.close()
 
-      // 1. PINNED TOP HEADER — Variant 5A Transparent Theme-Native Wordmark ([A-Eye] ✦ EYE | AI VISION)
+      // 1. PINNED TOP HEADER — Theme-native orb wordmark (orb + Aeye | AI VISION)
       Item {
         id: popoutHeader
         anchors.top: parent.top
@@ -447,7 +445,7 @@ BarWidget {
               anchors.top: parent.top
               spacing: Style.space(5)
 
-              // Variant D A-Eye mark acting directly as the letter A (100% transparent bg + live theme colors)
+              // Glass orb eye mark (live theme colors)
               Canvas {
                 id: aEyeLogo
                 width: Style.space(26)
@@ -465,57 +463,47 @@ BarWidget {
                   var s = width / 100.0
                   ctx.save()
                   ctx.scale(s, s)
-                  ctx.lineCap = "round"
-                  ctx.lineJoin = "round"
-                  // A apex & legs
-                  ctx.strokeStyle = colA
-                  ctx.lineWidth = 7.2
+                  // glass orb
+                  var g = ctx.createRadialGradient(40, 36, 4, 50, 50, 46)
+                  g.addColorStop(0, Qt.lighter(colA, 1.5)); g.addColorStop(0.6, colA); g.addColorStop(1, Qt.darker(colA, 1.9))
+                  ctx.fillStyle = g
+                  ctx.beginPath(); ctx.arc(50, 50, 44, 0, Math.PI * 2); ctx.fill()
+                  // almond lens
+                  ctx.fillStyle = Qt.rgba(1, 1, 1, 0.16)
+                  ctx.strokeStyle = Qt.rgba(1, 1, 1, 0.45)
+                  ctx.lineWidth = 1.6
                   ctx.beginPath()
-                  ctx.moveTo(35, 42); ctx.lineTo(50, 15); ctx.lineTo(65, 42)
-                  ctx.moveTo(27, 68); ctx.lineTo(19, 85)
-                  ctx.moveTo(73, 68); ctx.lineTo(81, 85)
-                  ctx.stroke()
-                  // Eye contour
-                  ctx.strokeStyle = colEye
-                  ctx.lineWidth = 6.0
-                  ctx.beginPath()
-                  ctx.moveTo(16, 55)
-                  ctx.bezierCurveTo(28, 39, 38.5, 35.5, 50, 35.5)
-                  ctx.bezierCurveTo(61.5, 35.5, 72, 39, 84, 55)
-                  ctx.bezierCurveTo(72, 71, 61.5, 74.5, 50, 74.5)
-                  ctx.bezierCurveTo(38.5, 74.5, 28, 71, 16, 55)
-                  ctx.closePath()
-                  ctx.stroke()
-                  // 4-point Spark pupil
+                  ctx.moveTo(6, 50)
+                  ctx.bezierCurveTo(22, 28, 36, 22, 50, 22)
+                  ctx.bezierCurveTo(64, 22, 78, 28, 94, 50)
+                  ctx.bezierCurveTo(78, 72, 64, 78, 50, 78)
+                  ctx.bezierCurveTo(36, 78, 22, 72, 6, 50)
+                  ctx.closePath(); ctx.fill(); ctx.stroke()
+                  // iris + pupil
                   ctx.fillStyle = colSpark
+                  ctx.beginPath(); ctx.arc(50, 50, 25, 0, Math.PI * 2); ctx.fill()
+                  ctx.fillStyle = Qt.rgba(0.02, 0.04, 0.1, 0.92)
+                  ctx.beginPath(); ctx.arc(50, 50, 14, 0, Math.PI * 2); ctx.fill()
+                  // spark
+                  ctx.fillStyle = Qt.rgba(1, 1, 1, 1)
                   ctx.beginPath()
-                  ctx.moveTo(50, 40.5); ctx.lineTo(53.4, 51.6); ctx.lineTo(64.5, 55)
-                  ctx.lineTo(53.4, 58.4); ctx.lineTo(50, 69.5); ctx.lineTo(46.6, 58.4)
-                  ctx.lineTo(35.5, 55); ctx.lineTo(46.6, 51.6)
-                  ctx.closePath()
-                  ctx.fill()
+                  ctx.moveTo(50, 37); ctx.lineTo(53, 47); ctx.lineTo(63, 50); ctx.lineTo(53, 53)
+                  ctx.lineTo(50, 63); ctx.lineTo(47, 53); ctx.lineTo(37, 50); ctx.lineTo(47, 47)
+                  ctx.closePath(); ctx.fill()
                   ctx.restore()
                 }
               }
 
-              PlainText {
-                anchors.verticalCenter: parent.verticalCenter
-                text: "✦"
-                color: root.colAnalysing
-                font.family: root.face
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
 
               PlainText {
                 id: eyeWord
                 anchors.verticalCenter: parent.verticalCenter
-                text: "EYE"
+                text: "Aeye"
                 color: root.fg
                 font.family: root.face
                 font.pixelSize: Math.round(Style.font.body * 1.25)
                 font.bold: true
-                font.letterSpacing: 2.5
+                font.letterSpacing: 0.4
               }
 
               Column {
@@ -540,7 +528,7 @@ BarWidget {
               }
             }
 
-            // Crisp accent underline under [A-Eye] ✦ EYE
+            // Crisp accent underline under Aeye wordmark
             Rectangle {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(3)
