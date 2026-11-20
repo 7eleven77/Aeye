@@ -1,0 +1,54 @@
+MIT License
+
+Copyright (c) 2026 7eleven77
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+NON-BINDING HUMAN TRANSLATION ("SERIOUSLY SILLY EDITION")
+(For laughs only — the standard MIT License text above is the sole legally
+binding agreement and always governs in any dispute.)
+================================================================================
+
+TL;DR — What this license actually means for mortals:
+
+1. YES, YOU CAN DO PRETTY MUCH ANYTHING:
+   - Run Aeye on your Omarchy setup, your laptop, your secret villain lair
+     workstation, or at 05:00 AM while debugging a missing semicolon.
+   - Fork it, remix it, repaint the eye hot-pink, sell it to a billionaire
+     hamster, or bundle it into your own dotfiles.
+
+2. ONE TINY CONDITION:
+   - Keep the copyright notice and MIT License text above intact. Don't pretend
+     you forged Aeye alone on a mountaintop in Norway — give credit where
+     credit is due.
+
+3. ZERO WARRANTIES (SERIOUSLY):
+   - Aeye is provided "AS IS". If an AI looks at your stacktrace and
+     confidently tells you to `rm -rf /`, or insists your CSS alignment bug is
+     "a bold artistic choice", or causes you to spill coffee on your mechanical
+     keyboard:
+       * That is 100% between you, the AI, and gravity.
+       * The author owes you zero dollars, zero keyboards, and zero emotional
+         damages (though mild sympathy may be offered on GitHub Issues).
+
+4. OPTIONAL SPIRITUAL CLAUSE (COMPLETELY NON-BINDING):
+   - If Aeye ever saves you 20 minutes of squinting at an error message, you are
+     morally encouraged — though legally under zero obligation — to nod
+     approvingly at your top bar and whisper "nice."

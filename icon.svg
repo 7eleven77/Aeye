@@ -1,0 +1,32 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgD" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#171c28"/>
+      <stop offset="100%" stop-color="#0e1118"/>
+    </linearGradient>
+    <radialGradient id="haloD" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.34"/>
+      <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#11141a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="starGradD" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <filter id="sparkGlowD" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#bgD)" stroke="#263044" stroke-width="1.8"/>
+  <circle cx="50" cy="54" r="28" fill="url(#haloD)"/>
+  <path d="M 38.5 43 L 50 23.5 L 61.5 43" fill="none" stroke="#eef4ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="32" y1="65" x2="26.5" y2="76.5" stroke="#eef4ff" stroke-width="5" stroke-linecap="round"/>
+  <line x1="68" y1="65" x2="73.5" y2="76.5" stroke="#eef4ff" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 24 54.5 C 33 42 41.2 39.2 50 39.2 C 58.8 39.2 67 42 76 54.5 C 67 67 58.8 69.8 50 69.8 C 41.2 69.8 33 67 24 54.5 Z" fill="#121620" stroke="#eef4ff" stroke-width="4.6" stroke-linejoin="round"/>
+  <path d="M 50 43.2 L 52.6 51.9 L 61.3 54.5 L 52.6 57.1 L 50 65.8 L 47.4 57.1 L 38.7 54.5 L 47.4 51.9 Z" fill="url(#starGradD)" filter="url(#sparkGlowD)"/>
+  <circle cx="50" cy="54.5" r="2" fill="#fffbeb"/>
+</svg>

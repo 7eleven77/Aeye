@@ -1,0 +1,729 @@
+#!/bin/bash
+# Aeye: hand a screenshot to a vision model, or watch the screenshots folder.
+# The model call copies the image into a private runtime temp dir so the agent
+# is not standing in $HOME with permission to edit the session.
+
+set -u
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cfg="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/aeye.json"
+keys_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/aeye-keys.json"
+legacy_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/linse.json"
+extract="$root/bin/extract.py"
+annotate="$root/bin/annotate.py"
+vision_api="$root/bin/vision_api.py"
+stream_parser="$root/bin/stream_parser.py"
+runtime_dir="${XDG_RUNTIME_DIR:-/tmp}/aeye-${UID:-$(id -u)}"
+pidfile="$runtime_dir/ask.pid"
+
+ensure_runtime() {
+  mkdir -p -m 700 "$runtime_dir"
+  # Prune stale work/raw temp entries left by interrupted runs (>15 min old)
+  find "$runtime_dir" -maxdepth 1 \( -name 'work.*' -o -name 'raw.*' \) -mmin +15 -exec rm -rf -- {} + 2>/dev/null || true
+}
+
+fail() {
+  printf 'ERR\t%s\n' "$1"
+  exit 0
+}
+
+pictures_dir() {
+  if [[ -n ${OMASNAP_SCREENSHOT_DIR:-} ]]; then
+    printf '%s\n' "$OMASNAP_SCREENSHOT_DIR"
+    return
+  fi
+  if [[ -n ${OMARCHY_SCREENSHOT_DIR:-} ]]; then
+    printf '%s\n' "$OMARCHY_SCREENSHOT_DIR"
+    return
+  fi
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs"
+  local dir=""
+  if [[ -f $file ]]; then
+    dir="$(sed -n 's/^XDG_PICTURES_DIR=//p' "$file" | tail -n 1 | tr -d '"')"
+    dir="${dir//\$HOME/$HOME}"
+  fi
+  dir="${dir:-$HOME/Pictures}"
+  if [[ -d "$dir/Screenshots" ]]; then
+    printf '%s\n' "$dir/Screenshots"
+  else
+    printf '%s\n' "$dir"
+  fi
+}
+
+base_pictures_dir() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs"
+  local dir=""
+  if [[ -f $file ]]; then
+    dir="$(sed -n 's/^XDG_PICTURES_DIR=//p' "$file" | tail -n 1 | tr -d '"')"
+    dir="${dir//\$HOME/$HOME}"
+  fi
+  printf '%s\n' "${dir:-$HOME/Pictures}"
+}
+
+ensure_cfg() {
+  mkdir -p "$(dirname "$cfg")"
+  if [[ ! -f $cfg && -f $legacy_cfg ]]; then
+    cp -- "$legacy_cfg" "$cfg"
+  fi
+  if [[ ! -f $cfg ]]; then
+    printf '%s\n' '{"provider":"agy","model":"gemini-3.8-flash-high","autosend":false,"minimizeOnSend":true,"showReason":false,"watch":false,"lang":"auto","minimalMode":false,"customPrompts":[]}' >"$cfg"
+  fi
+}
+
+cfg_get() {
+  ensure_cfg
+  jq -r --arg k "$1" --arg d "$2" '.[$k] // $d' "$cfg"
+}
+
+resolve_lang() {
+  local raw="${1:-}"
+  [[ -n $raw ]] || raw="$(cfg_get lang auto)"
+  if [[ $raw == "auto" || -z $raw ]]; then
+    local sys="${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}"
+    sys="${sys,,}"
+    case "$sys" in
+      nb*|nn*|no*) printf 'no\n' ;;
+      sv*) printf 'sv\n' ;;
+      da*) printf 'da\n' ;;
+      de*) printf 'de\n' ;;
+      fr*) printf 'fr\n' ;;
+      es*) printf 'es\n' ;;
+      pt*) printf 'pt\n' ;;
+      it*) printf 'it\n' ;;
+      pl*) printf 'pl\n' ;;
+      ja*) printf 'ja\n' ;;
+      zh*) printf 'zh\n' ;;
+      *)   printf 'en\n' ;;
+    esac
+  else
+    printf '%s\n' "$raw"
+  fi
+}
+
+lang_name() {
+  case "${1:-en}" in
+    no) printf 'Norwegian (Norsk)' ;;
+    sv) printf 'Swedish (Svenska)' ;;
+    da) printf 'Danish (Dansk)' ;;
+    de) printf 'German (Deutsch)' ;;
+    fr) printf 'French (Français)' ;;
+    es) printf 'Spanish (Español)' ;;
+    pt) printf 'Portuguese (Português)' ;;
+    it) printf 'Italian (Italiano)' ;;
+    pl) printf 'Polish (Polski)' ;;
+    ja) printf 'Japanese (日本語)' ;;
+    zh) printf 'Chinese (中文)' ;;
+    *)  printf 'English' ;;
+  esac
+}
+
+cmd_config_set() {
+  local key="${1:-}" value="${2:-}" type="${3:-string}"
+  [[ -n $key ]] || fail "config-set requires a key"
+  ensure_cfg
+  ensure_runtime
+  local tmp
+  tmp="$(mktemp "$runtime_dir/cfg.XXXXXX")"
+  case "$type" in
+    bool | number | json)
+      jq --arg k "$key" --argjson v "$value" '.[$k] = $v' "$cfg" >"$tmp" || { rm -f "$tmp"; exit 1; }
+      ;;
+    *)
+      jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$cfg" >"$tmp" || { rm -f "$tmp"; exit 1; }
+      ;;
+  esac
+  mv "$tmp" "$cfg"
+}
+
+cmd_config_patch() {
+  local patch="${1:-}"
+  [[ -n $patch ]] || fail "config-patch requires JSON"
+  ensure_cfg
+  ensure_runtime
+  local tmp
+  tmp="$(mktemp "$runtime_dir/cfg.XXXXXX")"
+  jq --argjson p "$patch" '. + $p' "$cfg" >"$tmp" || { rm -f "$tmp"; exit 1; }
+  mv "$tmp" "$cfg"
+}
+
+prompt_for() {
+  local mode="$1" follow="$2" prior="$3" reason="${4:-0}" lang has_marks="${6:-0}"
+  lang="$(resolve_lang "${5:-auto}")"
+  local lname rules body
+  lname="$(lang_name "$lang")"
+
+  rules="Always reply in ${lname}. Be concrete and concise. Use clean Markdown (bold, bullet points, and fenced code blocks with language tags when showing code or commands). No greeting. Do not guess illegible text. Do not modify files. Only read this single image."
+  case "$mode" in
+    ask)
+      body=$'Mode: ask about ambiguity.\nAsk one precise question in '"${lname}"$' about what the screen does not show. Do not solve it yet.'
+      ;;
+    read)
+      body=$'Mode: analyze the image.\nFirst write 2–3 short, concrete sentences in '"${lname}"$' about what the image shows (and what is wrong if it shows an error). No greeting.\nThen write exactly 3 short, relevant follow-up questions in '"${lname}"$' that the user can ask about this specific image (max 5 words per question). Each suggestion MUST be on its own line starting with the exact ASCII prefix "SUGGESTION: ".\nFinally, write one last line starting with the exact ASCII prefix "CATEGORY: " followed by ONE single word describing the primary domain of the screenshot: "code" (programming, terminal errors, stacktraces, configs), "grammar" (drafts, emails, prose, writing/translation), "realtime" (news, social posts, live data, very recent tools/events), "deep" (dense charts, diagrams, architecture, complex comparisons), or "general".'
+      ;;
+    user)
+      body=$'Mode: answer the user prompt in '"${lname}"$'.\nBe direct, clear, and well-structured using Markdown (bullets and fenced code blocks with language names when showing code/commands).'
+      ;;
+    *)
+      body=$'Mode: explain the issue in '"${lname}"$'.\nState what is wrong and one next step. If there is no issue, briefly describe what the image shows in one or two lines.'
+      ;;
+  esac
+
+  printf '%s\n\n%s\n\nThe image is named shot.png in this directory. Read the file.\n' "$rules" "$body"
+  if [[ $has_marks == 1 ]]; then
+    printf 'Note: Bright lime-yellow arrows or boxes have been drawn on shot.png by the user to highlight specific areas of interest. Focus your answer on what they point to or enclose.\n'
+  fi
+  if [[ $reason == 1 ]]; then
+    printf 'Visual Reasoning format (REQUIRED): First write a short visual reasoning section in %s starting with the exact ASCII prefix "REASON:" explaining step-by-step (2–4 short lines or bullets) what visual details in shot.png drive your answer. Then write a blank line followed by the exact ASCII line "ANSWER:" and then the actual answer.\n' "$lname"
+  fi
+  if [[ $mode == user && -n $follow ]]; then
+    if [[ -n $prior ]]; then
+      printf '\nPrior conversation context (do not repeat unless needed):\n%s\n' "$prior"
+    fi
+    printf '\nUser message:\n%s\n' "$follow"
+  elif [[ -n $follow ]]; then
+    printf '\nPrevious answer:\n%s\n\nFollow-up: %s\nReply briefly in %s to the follow-up. Same image.\n' "$prior" "$follow" "$lname"
+  fi
+}
+
+run_agy_stream() {
+  local model="$1" prompt="$2" out_raw="$3" err_file="$4"
+  (
+    set -o pipefail
+    timeout -k 5 80 agy \
+      --output-format stream-json \
+      --disable-slash-commands \
+      --dangerously-skip-permissions \
+      --model "$model" \
+      --print-timeout 75s \
+      --print="$prompt" 2>"$err_file" \
+      | python3 -u -B "$stream_parser" agy "$out_raw"
+  )
+}
+
+run_grok_stream() {
+  local model="$1" prompt="$2" out_raw="$3" err_file="$4"
+  (
+    set -o pipefail
+    timeout -k 5 90 grok \
+      -p "$prompt" \
+      --model "$model" \
+      --tools read_file \
+      --max-turns 3 \
+      --no-subagents \
+      --no-plan \
+      --disable-web-search \
+      --reasoning-effort low \
+      --output-format streaming-json \
+      --cwd "$PWD" 2>"$err_file" \
+      | python3 -u -B "$stream_parser" grok "$out_raw"
+  )
+}
+
+run_claude() {
+  local prompt="$1"
+  timeout -k 5 90 claude \
+    -p "$prompt" \
+    --allowedTools Read \
+    --permission-mode auto \
+    --output-format text
+}
+
+manual_key_get() {
+  local vendor="$1"
+  [[ -f $keys_cfg ]] || return 0
+  jq -r --arg v "$vendor" '.[$v] // ""' "$keys_cfg" 2>/dev/null || true
+}
+
+env_key_get() {
+  case "$1" in
+    gemini)    printf '%s' "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ;;
+    anthropic) printf '%s' "${ANTHROPIC_API_KEY:-}" ;;
+    xai)       printf '%s' "${XAI_API_KEY:-}" ;;
+    openai)    printf '%s' "${OPENAI_API_KEY:-}" ;;
+  esac
+}
+
+vendor_for() {
+  local provider="$1" model="$2"
+  if [[ $provider == "openai" || $model == gpt-* ]]; then
+    printf 'openai'
+  elif [[ $provider == "grok" || $provider == "xai" || $model == grok-* ]]; then
+    printf 'xai'
+  elif [[ $provider == "anthropic" || $provider == "claude" || $model == claude-* ]]; then
+    printf 'anthropic'
+  else
+    printf 'gemini'
+  fi
+}
+
+cmd_key_set() {
+  local vendor="${1:-}" key="${2:-}"
+  case "$vendor" in
+    gemini | anthropic | xai | openai) ;;
+    *) fail "unknown vendor: $vendor" ;;
+  esac
+  mkdir -p "$(dirname "$keys_cfg")"
+  ensure_runtime
+  if [[ ! -f $keys_cfg ]]; then
+    (umask 077 && printf '{}\n' >"$keys_cfg")
+  fi
+  chmod 600 "$keys_cfg" 2>/dev/null || true
+  local tmp
+  tmp="$(umask 077 && mktemp "$runtime_dir/keys.XXXXXX")"
+  if [[ -z $key ]]; then
+    jq --arg k "$vendor" 'del(.[$k])' "$keys_cfg" >"$tmp" || { rm -f "$tmp"; exit 1; }
+  else
+    jq --arg k "$vendor" --arg v "$key" '.[$k] = $v' "$keys_cfg" >"$tmp" || { rm -f "$tmp"; exit 1; }
+  fi
+  chmod 600 "$tmp" 2>/dev/null || true
+  mv "$tmp" "$keys_cfg"
+  printf 'OK\n'
+}
+
+provider_entry_json() {
+  local vendor="$1" label="$2" env_name="$3" cli_label="$4"
+  local manual envk source="missing" detail="Not configured" has_manual="false" ready="false"
+  manual="$(manual_key_get "$vendor")"
+  envk="$(env_key_get "$vendor")"
+  if [[ -n $manual ]]; then
+    has_manual="true"
+    source="manual"
+    detail="Manual API key"
+    ready="true"
+  elif [[ -n $cli_label ]]; then
+    source="omarchy"
+    detail="Omarchy ($cli_label)"
+    ready="true"
+  elif [[ -n $envk ]]; then
+    source="env"
+    detail="Env ($env_name)"
+    ready="true"
+  fi
+  jq -nc \
+    --arg vendor "$vendor" \
+    --arg label "$label" \
+    --arg envName "$env_name" \
+    --arg source "$source" \
+    --arg detail "$detail" \
+    --argjson hasManual "$has_manual" \
+    --argjson ready "$ready" \
+    '{vendor:$vendor, label:$label, envName:$envName, source:$source, detail:$detail, hasManual:$hasManual, ready:$ready}'
+}
+
+cmd_providers() {
+  local gem_cli="" ant_cli="" xai_cli="" oai_cli=""
+  command -v agy >/dev/null 2>&1 && gem_cli="agy"
+  if command -v agy >/dev/null 2>&1; then
+    ant_cli="agy"
+  elif command -v claude >/dev/null 2>&1; then
+    ant_cli="claude"
+  fi
+  command -v grok >/dev/null 2>&1 && xai_cli="grok"
+  # OpenAI vision calls require OPENAI_API_KEY or manual key (codex CLI is text/code focused)
+  jq -nc \
+    --argjson gemini "$(provider_entry_json gemini "Google Gemini" "GEMINI_API_KEY" "$gem_cli")" \
+    --argjson anthropic "$(provider_entry_json anthropic "Anthropic Claude" "ANTHROPIC_API_KEY" "$ant_cli")" \
+    --argjson xai "$(provider_entry_json xai "xAI Grok" "XAI_API_KEY" "$xai_cli")" \
+    --argjson openai "$(provider_entry_json openai "OpenAI" "OPENAI_API_KEY" "$oai_cli")" \
+    '[$gemini, $anthropic, $xai, $openai]'
+}
+
+run_api() {
+  local vendor="$1" model="$2" prompt="$3" image="$4" api_key="$5" work="$6"
+  local pfile="$work/prompt.txt" kfile="$work/api.key"
+  (umask 077 && printf '%s' "$prompt" >"$pfile" && printf '%s' "$api_key" >"$kfile")
+  timeout -k 5 75 python3 -B "$vision_api" "$vendor" "$model" "$image" "$pfile" "$kfile"
+}
+
+cmd_ask() {
+  local provider="" model="" mode="explain" image="" follow="" prior="" reason=0 lang="" marks=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --provider) provider="${2:-}"; shift 2 ;;
+      --model) model="${2:-}"; shift 2 ;;
+      --mode) mode="${2:-}"; shift 2 ;;
+      --image) image="${2:-}"; shift 2 ;;
+      --follow) follow="${2:-}"; shift 2 ;;
+      --prior) prior="${2:-}"; shift 2 ;;
+      --lang) lang="${2:-}"; shift 2 ;;
+      --marks) marks="${2:-}"; shift 2 ;;
+      --reason) reason=1; shift ;;
+      *) fail "unknown argument: $1" ;;
+    esac
+  done
+  [[ -n $image && -f $image ]] || fail "Image not found"
+  case "$mode" in
+    explain | ask | read | user) ;;
+    *) fail "unknown mode" ;;
+  esac
+  [[ -n $provider ]] || provider="$(cfg_get provider agy)"
+  [[ -n $model ]] || model="$(cfg_get model gemini-3.8-flash-high)"
+  lang="$(resolve_lang "$lang")"
+
+  ensure_runtime
+  rm -f "$runtime_dir"/answer.* 2>/dev/null || true
+
+  local has_marks=0
+  echo $$ >"$pidfile"
+  _ask_work="$(mktemp -d "$runtime_dir/work.XXXXXX")"
+  _ask_raw="$(mktemp "$runtime_dir/raw.XXXXXX")"
+  local work="$_ask_work" raw="$_ask_raw" answer_file
+  answer_file="$(mktemp "$runtime_dir/answer.XXXXXX")"
+
+  cleanup_ask() {
+    rm -rf "${_ask_work:-}" "${_ask_raw:-}" "${_ask_raw:-}.err" 2>/dev/null || true
+    if [[ -f $pidfile && "$(cat "$pidfile" 2>/dev/null || true)" == "$$" ]]; then
+      rm -f "$pidfile" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_ask EXIT INT TERM
+
+  cp -- "$image" "$work/shot.png"
+  if [[ -n $marks && $marks != "[]" ]]; then
+    if python3 -B "$annotate" "$work/shot.png" "$marks" 2>/dev/null; then
+      has_marks=1
+    fi
+  fi
+
+  local prompt vendor manual_key env_key extract_provider="text" code=0
+  prompt="$(prompt_for "$mode" "$follow" "$prior" "$reason" "$lang" "$has_marks")"
+  vendor="$(vendor_for "$provider" "$model")"
+  manual_key="$(manual_key_get "$vendor")"
+  env_key="$(env_key_get "$vendor")"
+
+  if [[ -n $manual_key ]]; then
+    printf 'STEP\tCalling %s Vision API…\n' "$vendor"
+    run_api "$vendor" "$model" "$prompt" "$work/shot.png" "$manual_key" "$work" >"$raw" 2>"$raw.err" || code=$?
+  elif [[ $vendor == "gemini" ]] && command -v agy >/dev/null 2>&1; then
+    extract_provider="text"
+    (cd "$work" && run_agy_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
+  elif [[ $vendor == "anthropic" ]] && command -v agy >/dev/null 2>&1; then
+    extract_provider="text"
+    (cd "$work" && run_agy_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
+  elif [[ $vendor == "anthropic" ]] && command -v claude >/dev/null 2>&1; then
+    printf 'STEP\tRunning Claude CLI…\n'
+    (cd "$work" && run_claude "$prompt") >"$raw" 2>"$raw.err" || code=$?
+  elif [[ $vendor == "xai" ]] && command -v grok >/dev/null 2>&1; then
+    extract_provider="text"
+    (cd "$work" && run_grok_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
+  elif [[ -n $env_key ]]; then
+    printf 'STEP\tCalling %s Vision API…\n' "$vendor"
+    run_api "$vendor" "$model" "$prompt" "$work/shot.png" "$env_key" "$work" >"$raw" 2>"$raw.err" || code=$?
+  else
+    rm -f "$answer_file"
+    fail "No Omarchy agent or API key configured for ${vendor}. Add one in Aeye top-bar settings."
+  fi
+
+  # Graceful fallback to env API key if CLI returned error with empty stdout
+  if [[ $code -ne 0 && ! -s $raw && -z $manual_key && -n $env_key ]]; then
+    code=0
+    extract_provider="text"
+    run_api "$vendor" "$model" "$prompt" "$work/shot.png" "$env_key" "$work" >"$raw" 2>"$raw.err" || code=$?
+  fi
+
+  if [[ $code -ne 0 && ! -s $raw ]]; then
+    local err
+    err="$(tail -n 1 "$raw.err" 2>/dev/null | tr '\n' ' ' | cut -c 1-180)"
+    rm -f "$answer_file"
+    fail "${err:-model did not respond}"
+  fi
+  python3 -B "$extract" "$extract_provider" "$raw" >"$answer_file"
+  if [[ ! -s $answer_file ]]; then
+    rm -f "$answer_file"
+    fail "empty response"
+  fi
+  printf 'OK\t%s\n' "$answer_file"
+}
+
+cmd_crop() {
+  local image="${1:-}" geom="${2:-}"
+  [[ -n $image && -f $image ]] || fail "Image not found"
+  [[ -n $geom ]] || fail "Missing crop geometry"
+  ensure_runtime
+  local out
+  out="$(mktemp "$runtime_dir/crop-XXXXXX.png")"
+  if ! magick "$image" -crop "$geom" +repage "$out" 2>/dev/null; then
+    rm -f "$out" 2>/dev/null || true
+    fail "Crop failed"
+  fi
+  # Remove older temporary crops from runtime_dir while preserving the newly created one
+  local old
+  for old in "$runtime_dir"/crop-*.png; do
+    [[ -f $old && $old != "$out" ]] && rm -f "$old" 2>/dev/null || true
+  done
+  printf 'OK\t%s\n' "$out"
+}
+
+cmd_open() {
+  local res
+  res="$(omarchy-shell shell call io.github.7eleven77.aeye open '{}' 2>/dev/null || true)"
+  if [[ $res != "ok" ]]; then
+    omarchy-shell shell summon io.github.7eleven77.aeye '{}' >/dev/null 2>&1 || true
+  fi
+}
+
+cmd_stealth_off() {
+  cmd_config_set minimalMode false bool
+  cmd_open
+}
+
+cmd_copy() {
+  local text="${1:-}"
+  [[ -n $text ]] || exit 0
+  printf '%s' "$text" | wl-copy >/dev/null 2>&1 || true
+}
+
+cmd_copy_last() {
+  local last="$runtime_dir/last-answer.txt"
+  [[ -f $last ]] || exit 0
+  wl-copy <"$last" >/dev/null 2>&1 || true
+}
+
+cmd_notify_ready() {
+  local title="${1:-Aeye}" body="${2:-}" image="${3:-}" open_lbl="${4:-Open Answer}" copy_lbl="${5:-Copy}" answer="${6:-}"
+  [[ -n $body ]] || exit 0
+  ensure_runtime
+  if [[ -n $answer ]]; then
+    printf '%s' "$answer" >"$runtime_dir/last-answer.txt"
+    chmod 600 "$runtime_dir/last-answer.txt" 2>/dev/null || true
+  fi
+  local img_args=()
+  [[ -n $image && -f $image ]] && img_args=(--image "$image")
+  omarchy-notification-send "$title" "$body" "${img_args[@]}" \
+    --action "$open_lbl" "$root/bin/aeye" open \
+    --action "$copy_lbl" "$root/bin/aeye" copy-last >/dev/null 2>&1 \
+    || notify-send ${image:+-i "$image"} "$title" "$body" >/dev/null 2>&1 || true
+}
+
+cmd_notify_error() {
+  local title="${1:-⚠ Aeye}" body="${2:-}" image="${3:-}" open_lbl="${4:-Open Aeye}"
+  [[ -n $body ]] || exit 0
+  local img_args=()
+  [[ -n $image && -f $image ]] && img_args=(--image "$image")
+  omarchy-notification-send -u normal "$title" "$body" "${img_args[@]}" \
+    --action "$open_lbl" "$root/bin/aeye" open >/dev/null 2>&1 \
+    || notify-send ${image:+-i "$image"} "$title" "$body" >/dev/null 2>&1 || true
+}
+
+cmd_notify() {
+  local title="${1:-Aeye}" body="${2:-}" image="${3:-}"
+  [[ -n $body ]] || exit 0
+  local img_args=()
+  [[ -n $image && -f $image ]] && img_args=(--image "$image")
+  omarchy-notification-send "$title" "$body" "${img_args[@]}" \
+    --action "Open Aeye" "$root/bin/aeye" open \
+    --action "Stealth: OFF" "$root/bin/aeye" stealth-off >/dev/null 2>&1 \
+    || notify-send ${image:+-i "$image"} "$title" "$body" >/dev/null 2>&1 || true
+}
+
+cmd_watch() {
+  local dir base
+  dir="$(pictures_dir)"
+  base="$(base_pictures_dir)"
+  local dirs=()
+  [[ -d $dir ]] && dirs+=("$dir")
+  [[ -d $base && $base != "$dir" ]] && dirs+=("$base")
+  [[ ${#dirs[@]} -gt 0 ]] || fail "pictures folder not found: $dir"
+  exec inotifywait -m -q -e close_write,moved_to --format '%w%f' "${dirs[@]}"
+}
+
+cmd_agents() {
+  local omarchy=""
+  local agent_file="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/defaults/agent"
+  [[ -f $agent_file ]] && read -r omarchy <"$agent_file"
+  [[ -n $omarchy ]] || omarchy="grok"
+  local provider="grok" model="grok-4.7" vision="Grok" why="Agent: ${omarchy}"
+  if command -v agy >/dev/null 2>&1; then
+    provider="agy"
+    model="gemini-3.8-flash-high"
+    vision="Gemini"
+    why="CLI Agent: ${omarchy} · Vision: Gemini"
+  elif command -v grok >/dev/null 2>&1; then
+    provider="grok"
+    model="grok-4.7"
+    vision="Grok"
+    why="CLI Agent & Vision: ${omarchy}"
+  fi
+  jq -nc \
+    --arg omarchy "$omarchy" \
+    --arg provider "$provider" \
+    --arg model "$model" \
+    --arg vision "$vision" \
+    --arg why "$why" \
+    '{omarchy:$omarchy, provider:$provider, model:$model, vision:$vision, why:$why}'
+}
+
+signal_tree() {
+  local sig="$1" p="$2"
+  local child
+  for child in $(pgrep -P "$p" 2>/dev/null || true); do
+    signal_tree "$sig" "$child"
+  done
+  kill "-$sig" "$p" 2>/dev/null || true
+}
+
+cmd_control() {
+  local action="$1"
+  [[ -f $pidfile ]] || exit 0
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  [[ -n $pid ]] || exit 0
+  case "$action" in
+    STOP) signal_tree STOP "$pid" ;;
+    CONT) signal_tree CONT "$pid" ;;
+    TERM)
+      signal_tree CONT "$pid"
+      signal_tree TERM "$pid"
+      rm -f "$pidfile" 2>/dev/null || true
+      ;;
+  esac
+}
+
+cmd_terminal() {
+  local text="${1:-}"
+  [[ -n $text ]] || fail "empty terminal payload"
+  printf '%s' "$text" | wl-copy || true
+  omarchy-agent --prompt "$text" >/dev/null 2>&1 &
+}
+
+cmd_edit() {
+  local path="${1:-}"
+  [[ -n $path && -f $path ]] || exit 0
+  local editor="${OMARCHY_SCREENSHOT_EDITOR:-}"
+  if [[ -n $editor ]] && command -v "$editor" >/dev/null 2>&1; then
+    "$editor" "$path" >/dev/null 2>&1
+  elif command -v omasnap >/dev/null 2>&1; then
+    omasnap --file "$path" >/dev/null 2>&1
+  elif command -v satty >/dev/null 2>&1; then
+    satty --filename "$path" --output-filename "$path" --copy-command wl-copy >/dev/null 2>&1
+  elif command -v tensaku >/dev/null 2>&1; then
+    tensaku \
+      --filename "$path" \
+      --output-filename "$path" \
+      --actions-on-enter save-to-clipboard \
+      --save-after-copy \
+      --copy-command wl-copy >/dev/null 2>&1
+  fi
+}
+
+find_new_screenshot() {
+  local start_ns="$1"
+  shift
+  python3 - "$start_ns" "$@" <<'PY'
+import os, sys
+
+start_ns = int(sys.argv[1])
+exts = (".png", ".jpg", ".jpeg", ".webp")
+best_path = ""
+best_mtime = -1
+
+for folder in sys.argv[2:]:
+    if not folder or not os.path.isdir(folder):
+        continue
+    try:
+        with os.scandir(folder) as it:
+            for entry in it:
+                if not entry.is_file():
+                    continue
+                if not entry.name.lower().endswith(exts):
+                    continue
+                try:
+                    mtime = entry.stat().st_mtime_ns
+                except OSError:
+                    continue
+                if mtime >= start_ns and mtime > best_mtime:
+                    best_mtime = mtime
+                    best_path = entry.path
+    except OSError:
+        continue
+
+if best_path:
+    print(best_path)
+PY
+}
+
+cmd_capture() {
+  local start_ns out path minimal lang dir base
+  start_ns="$(date +%s%N)"
+  if command -v omasnap >/dev/null 2>&1; then
+    # Use omasnap directly without --notify so Aeye captures stay silent
+    # (regular Omarchy screenshots outside Aeye keep their normal notifications).
+    out="$(omasnap --capture-region --save 2>/dev/null || true)"
+  else
+    out="$(omarchy capture screenshot region save 2>/dev/null || true)"
+  fi
+  path="$(printf '%s\n' "$out" | awk '/^\// { p = $0 } END { print p }')"
+  if [[ -z $path || ! -f $path ]]; then
+    dir="$(pictures_dir)"
+    base="$(base_pictures_dir)"
+    path="$(find_new_screenshot "$start_ns" "$dir" "$base")"
+  fi
+  [[ -n $path && -f $path ]] || exit 0
+  wl-copy --type image/png <"$path" || true
+  minimal="$(cfg_get minimalMode false)"
+  lang="$(resolve_lang "$(cfg_get lang auto)")"
+  if [[ $minimal == "true" ]]; then
+    local stealth_msg="Analyzing screenshot in background…"
+    case "$lang" in
+      no) stealth_msg="Analyserer skjermbilde i bakgrunnen…" ;;
+      sv) stealth_msg="Analyserar skärmbild i bakgrunden…" ;;
+      da) stealth_msg="Analyserer skærmbillede i baggrunden…" ;;
+      de) stealth_msg="Bildschirmfoto wird im Hintergrund analysiert…" ;;
+      fr) stealth_msg="Analyse de la capture en arrière-plan…" ;;
+      es) stealth_msg="Analizando captura en segundo plano…" ;;
+      pt) stealth_msg="Analisando captura em segundo plano…" ;;
+      it) stealth_msg="Analisi dello screenshot in background…" ;;
+      pl) stealth_msg="Analizowanie zrzutu ekranu w tle…" ;;
+      ja) stealth_msg="バックグラウンドでスクリーンショットを解析中…" ;;
+      zh) stealth_msg="正在后台分析截图…" ;;
+    esac
+    omarchy-notification-send "Aeye (Stealth)" "$stealth_msg" --image "$path" \
+      --action "Open Aeye" "$root/bin/aeye" open \
+      --action "Stealth: OFF" "$root/bin/aeye" stealth-off >/dev/null 2>&1 || true
+  fi
+  local payload res
+  payload="$(jq -nc --arg path "$path" '{path:$path}')"
+  res="$(omarchy-shell shell call io.github.7eleven77.aeye compose "$payload" 2>/dev/null || true)"
+  if [[ $res != "ok" ]]; then
+    omarchy-shell shell summon io.github.7eleven77.aeye "$payload" >/dev/null 2>&1 || true
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+aeye watch
+aeye ask --image <file> [--mode explain|ask|read|user] [--provider agy|grok|openai] [--model <id>] [--lang auto|en|no|sv|da|de|fr|es|pt|it|pl|ja|zh] [--marks <json>] [--follow <text>] [--prior <text>] [--reason]
+aeye crop <file> <WxH+X+Y>
+aeye providers
+aeye key-set <gemini|anthropic|xai|openai> <api-key-or-empty>
+aeye notify <title> <body> [image]
+aeye capture
+aeye edit <file>
+aeye config-set <key> <value> [string|bool|number|json]
+EOF
+}
+
+case "${1:-}" in
+  watch) shift; cmd_watch "$@" ;;
+  ask) shift; cmd_ask "$@" ;;
+  crop) shift; cmd_crop "$@" ;;
+  providers) cmd_providers ;;
+  key-set) shift; cmd_key_set "${1:-}" "${2:-}" ;;
+  notify) shift; cmd_notify "$@" ;;
+  notify-ready) shift; cmd_notify_ready "$@" ;;
+  notify-error) shift; cmd_notify_error "$@" ;;
+  copy) shift; cmd_copy "${1:-}" ;;
+  copy-last) cmd_copy_last ;;
+  agents) cmd_agents ;;
+  pause) cmd_control STOP ;;
+  resume) cmd_control CONT ;;
+  stop) cmd_control TERM ;;
+  terminal) shift; cmd_terminal "${1:-}" ;;
+  edit) shift; cmd_edit "${1:-}" ;;
+  capture) shift; cmd_capture "$@" ;;
+  open) cmd_open ;;
+  stealth-off) cmd_stealth_off ;;
+  config-set) shift; cmd_config_set "$@" ;;
+  config-patch) shift; cmd_config_patch "${1:-}" ;;
+  *) usage; exit 1 ;;
+esac
