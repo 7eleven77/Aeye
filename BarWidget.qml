@@ -4,9 +4,10 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
-// Aeye top-bar widget: always-visible animated Spark Pupil icon + native
-// Omarchy KeyboardPanel popout for quick capture, settings, API keys, and
-// pinned prompts — 100% styled from Omarchy's live system theme.
+// Aeye top-bar widget: eye mark + native Omarchy KeyboardPanel popout
+// for quick capture, settings, API keys, and pinned prompts.
+// Chrome follows the live Omarchy theme. Secondary text is mixed from
+// the popup foreground, because several themes use `muted` as a surface.
 BarWidget {
   id: root
   moduleName: "io.github.7eleven77.aeye"
@@ -17,10 +18,12 @@ BarWidget {
 
   readonly property string stage: svc ? String(svc.stage || "idle") : "idle"
   readonly property bool paused: svc ? svc.paused === true : false
+  readonly property bool windowOpen: svc ? svc.windowOpen === true : false
   readonly property bool hasUnreadAnswer: svc ? svc.hasUnreadAnswer === true : false
   readonly property bool hasAnswer: svc ? svc.hasAnswer === true : false
   readonly property bool hasImage: svc ? svc.hasImage === true : false
   readonly property bool analysing: stage === "analysing"
+  readonly property bool isActive: root.opened || root.windowOpen || root.analysing || root.hasUnreadAnswer
 
   readonly property string modelId: svc ? String(svc.model || "gemini-3.8-flash-high") : "gemini-3.8-flash-high"
   readonly property bool autosend: svc ? svc.autosend === true : false
@@ -28,19 +31,38 @@ BarWidget {
   readonly property bool minimalMode: svc ? svc.minimalMode === true : false
   readonly property bool showReason: svc ? svc.showReason === true : false
   readonly property bool systemDebug: svc ? svc.systemDebug === true : false
+  readonly property bool agentMemory: svc ? svc.agentMemory !== false : true
+  readonly property bool autoDelegate: svc ? svc.autoDelegate !== false : true
   readonly property string activeLang: svc ? String(svc.activeLang || "en") : "en"
   readonly property string localeDisplayLabel: svc ? String(svc.localeDisplayLabel || "Auto (EN)") : "Auto (EN)"
   readonly property string hudPlacement: svc ? String(svc.hudPlacement || "bottom") : "bottom"
   readonly property string visionWhy: svc ? String(svc.visionWhy || "") : ""
   readonly property var customPrompts: svc && Array.isArray(svc.customPrompts) ? svc.customPrompts : []
+  readonly property var customModels: svc && Array.isArray(svc.customModels) ? svc.customModels : []
   readonly property var providerStatuses: svc && Array.isArray(svc.providerStatuses) ? svc.providerStatuses : []
+  readonly property var availableModels: svc && svc.availableModels ? svc.availableModels : ({})
+  readonly property bool loadingModels: svc ? svc.loadingModels === true : false
+  readonly property var availableModelsForVendor: {
+    var list = availableModels && availableModels[newModelVendor]
+    return Array.isArray(list) ? list : []
+  }
+  readonly property string customContext: svc ? String(svc.customContext || "") : ""
+  readonly property string contextFile: svc ? String(svc.contextFile || "") : ""
+  readonly property var providerAuthMode: svc && svc.providerAuthMode ? svc.providerAuthMode : ({})
+  readonly property var modelAuthMode: svc && svc.modelAuthMode ? svc.modelAuthMode : ({})
+  readonly property bool hasNoteContext: customContext.replace(/^\s+|\s+$/g, "").length > 0
+  readonly property bool hasFileContext: contextFile.replace(/^\s+|\s+$/g, "").length > 0
+  readonly property bool hasAnyContext: hasNoteContext || hasFileContext
 
-  // 100% live Omarchy system theme colors
+  // Live Omarchy theme. `dim` is opaque secondary text, not Color.muted.
+  // On some themes muted is a near-background surface and cannot be read.
   readonly property color fg: Commons.Color.popups.text
-  readonly property color dim: Commons.Color.muted
+  readonly property color bg: Commons.Color.popups.background
+  readonly property color dim: mixOn(bg, fg, 0.72)
   readonly property color line: Commons.Color.popups.border
-  readonly property color surface: Util.alpha(fg, 0.05)
-  readonly property color surfaceHover: Util.alpha(fg, 0.1)
+  readonly property color softLine: Util.alpha(fg, 0.11)
+  readonly property color surface: Util.alpha(fg, 0.045)
+  readonly property color surfaceHover: Util.alpha(fg, 0.09)
   readonly property color colAnalysing: svc ? svc.colAnalysing : Commons.Color.accent
   readonly property color colSuccess: svc ? svc.colSuccess : Commons.Color.accent
   readonly property string face: bar ? bar.fontFamily : Style.font.family
@@ -48,8 +70,23 @@ BarWidget {
   readonly property bool opened: panelController.open
   property bool popoutSwitchClosing: false
   property string hoverTip: ""
+  property bool optionsPage: false
+  property bool contextExpanded: false
   property bool keysExpanded: false
+  property bool promptsExpanded: false
   property string editingVendor: ""
+  property bool addModelOpen: false
+  property string newModelVendor: "gemini"
+
+  function mixOn(back, front, t) {
+    if (!back || !front) return front || fg
+    return Qt.rgba(
+      front.r * t + back.r * (1 - t),
+      front.g * t + back.g * (1 - t),
+      front.b * t + back.b * (1 - t),
+      1
+    )
+  }
 
   function setPopoutHover(active, text) {
     if (active && text !== "") hoverTip = text
@@ -58,12 +95,28 @@ BarWidget {
 
   function open() {
     hoverTip = ""
-    if (svc) svc.requestRefreshProviders()
+    if (svc) {
+      svc.requestRefreshProviders()
+      if (!availableModels || Object.keys(availableModels).length === 0)
+        svc.requestRefreshAvailableModels(false)
+    }
     panelController.show()
   }
+  function flushPendingContext() {
+    if (!svc) return
+    var noteVal = ctxNoteEdit.text.replace(/^\s+|\s+$/g, "")
+    if (noteVal !== customContext.replace(/^\s+|\s+$/g, ""))
+      svc.requestSetCustomContext(noteVal)
+    var fileVal = ctxFileInput.text.replace(/^\s+|\s+$/g, "")
+    if (fileVal !== contextFile.replace(/^\s+|\s+$/g, ""))
+      svc.requestSetContextFile(fileVal)
+  }
+
   function close() {
+    flushPendingContext()
     hoverTip = ""
     editingVendor = ""
+    optionsPage = false
     panelController.hide()
   }
   function toggle() { opened ? close() : open() }
@@ -109,6 +162,11 @@ BarWidget {
     tipSysDebug:   { en: "Opt-in troubleshooting: attaches a bounded ~8 KB read-only snapshot (recent journalctl errors, failed units, Hyprland state, disk/RAM) so AI can diagnose real system issues. Zero sudo, zero secrets, never executes commands.", no: "Valgfri feilsøking: legger ved et avgrenset ~8 KB read-only snapshot (siste journalctl-feil, feilede tjenester, Hyprland-status, disk/RAM) så AI finner ekte systemårsaker. Null sudo, null hemmeligheter, kjører aldri kommandoer.", sv: "Valfri felsökning: bifogar en ~8 KB skrivskyddad ögonblicksbild (journalctl-fel, tjänster, Hyprland, disk/RAM). Ingen sudo, inga hemligheter, kör aldrig kommandon.", da: "Valgfri fejlfinding: vedhæfter et ~8 KB skrivebeskyttet snapshot (journalctl-fejl, tjenester, Hyprland, disk/RAM). Ingen sudo, ingen hemmeligheder, kører aldrig kommandoer.", de: "Optionale Fehlersuche: hängt einen ~8 KB Nur-Lese-Snapshot an (journalctl, Units, Hyprland, RAM/Disk). Kein sudo, keine Geheimnisse, keine automatische Ausführung.", fr: "Dépannage opt-in : joint un instantané lecture seule (~8 Ko : journalctl, unités, Hyprland, RAM/disque). Sans sudo, sans secrets, sans exécution automatique.", es: "Diagnóstico opcional: adjunta una instantánea de solo lectura (~8 KB: journalctl, unidades, Hyprland, RAM/disco). Sin sudo, sin secretos, sin ejecución automática.", pt: "Solução de problemas opcional: anexa um snapshot somente leitura (~8 KB: journalctl, unidades, Hyprland, RAM/disco). Sem sudo, sem segredos, sem execução automática.", it: "Debug opzionale: allega uno snapshot in sola lettura (~8 KB: journalctl, unità, Hyprland, RAM/disco). Zero sudo, zero segreti, nessuna esecuzione automatica.", pl: "Opcjonalna diagnostyka: dołącza migawkę tylko do odczytu (~8 KB: journalctl, usługi, Hyprland, RAM/dysk). Bez sudo, bez sekretów, bez automatycznego uruchamiania.", ja: "任意のトラブルシューティング：約8KBの読み取り専用スナップショット（journalctl、失敗ユニット、Hyprland、メモリ/ディスク）を添付します。sudo・機密情報・自動実行なし。", zh: "可选故障排查：附加约 8 KB 只读快照（journalctl 错误、失败服务、Hyprland、磁盘/内存）。无 sudo、无密钥、绝不自动执行命令。" },
     noActiveModels:{ en: "No active AI providers — click to add an API key below", no: "Ingen aktive AI-tilbydere — klikk for å legge inn API-nøkkel under", sv: "Inga aktiva AI-leverantörer — klicka för att lägga till API-nyckel", da: "Ingen aktive AI-udbydere — klik for at tilføje en API-nøgle", de: "Keine aktiven KI-Anbieter — klicken für API-Key-Setup", fr: "Aucun fournisseur IA actif — cliquez pour ajouter une clé API", es: "Sin proveedores de IA activos — haz clic para añadir una clave API", pt: "Nenhum provedor de IA ativo — clique para adicionar uma chave API", it: "Nessun provider IA attivo — clicca per aggiungere una chiave API", pl: "Brak aktywnych dostawców AI — kliknij, aby dodać klucz API", ja: "有効なAIプロバイダーなし — クリックしてAPIキーを設定", zh: "暂无已启用的 AI 服务商 — 点击下方配置 API 密钥" },
     stealth:       { en: "Stealth mode", no: "Stillemodus (Stealth)", sv: "Tyst läge (Stealth)", da: "Stilletilstand (Stealth)", de: "Still-Modus (Stealth)", fr: "Mode discret (Stealth)", es: "Modo sigilo (Stealth)", pt: "Modo discreto (Stealth)", it: "Modalità silenziosa", pl: "Tryb cichy (Stealth)", ja: "ステルスモード", zh: "静默模式" },
+    modeQuick:     { en: "⚡ Auto-Analyze: ON", no: "⚡ Auto-analyse: PÅ", sv: "⚡ Auto-analys: PÅ", da: "⚡ Auto-analyse: TIL", de: "⚡ Auto-Analyse: AN", fr: "⚡ Auto-analyse : ON", es: "⚡ Auto-análisis: SÍ", pt: "⚡ Auto-análise: ON", it: "⚡ Auto-analisi: ON", pl: "⚡ Auto-analiza: WŁ", ja: "⚡ 自動解析: ON", zh: "⚡ 自动分析: 开" },
+    modeHud:       { en: "✎ Manual Prompt", no: "✎ Manuell (vent på spørsmål)", sv: "✎ Manuell", da: "✎ Manuel", de: "✎ Manuell", fr: "✎ Manuel", es: "✎ Manual", pt: "✎ Manual", it: "✎ Manuale", pl: "✎ Ręcznie", ja: "✎ 手動質問", zh: "✎ 手动提问" },
+    tipModeQuick:  { en: "Auto-Analyze ON: immediately analyzes new screenshots in 1–2s, auto-copies the first answer, and opens compact chat (expands automatically as you chat).", no: "Auto-analyse PÅ: analyserer skjermbildet med én gang på 1–2s, kopierer første svar automatisk og åpner kompakt chat (utvider seg når du chatter videre).", sv: "Auto-analys PÅ: analyserar skärmbilden direkt, kopierar svaret och öppnar kompakt chatt.", da: "Auto-analyse TIL: analyserer skærmbilledet med det samme, kopierer svaret og åbner kompakt chat.", de: "Auto-Analyse AN: analysiert neue Screenshots sofort, kopiert die erste Antwort und öffnet den kompakten Chat.", fr: "Auto-analyse ON : analyse immédiatement la capture, copie la réponse et ouvre le chat compact.", es: "Auto-análisis SÍ: analiza al instante, copia la primera respuesta y abre el chat compacto.", pt: "Auto-análise ON: analisa na hora, copia a primeira resposta e abre o chat compacto.", it: "Auto-analisi ON: analizza subito, copia la prima risposta e apre la chat compatta.", pl: "Auto-analiza WŁ: analizuje od razu, kopiuje odpowiedź i otwiera kompaktowy czat.", ja: "自動解析ON：撮影直後に解析して回答を自動コピーし、コンパクトチャットを開きます。", zh: "自动分析开启：截图后立即分析并自动复制首条回答，打开紧凑对话窗口。" },
+    tipModeHud:    { en: "Manual Prompt mode: opens the screenshot preview first and waits for you to draw arrows/boxes/crop or type your own question before calling AI.", no: "Manuell modus: åpner skjermbildet først og venter til du tegner piler/bokser/utsnitt eller skriver spørsmålet ditt før AI kjører.", sv: "Manuellt läge: öppnar skärmbilden först och väntar på dina markeringar eller din fråga innan AI körs.", da: "Manuel tilstand: åbner skærmbilledet først og venter på dine markeringer eller dit spørgsmål.", de: "Manueller Modus: öffnet zuerst die Bildvorschau zum Zeichnen/Zuschneiden und wartet auf deine Frage.", fr: "Mode manuel : ouvre d'abord l'aperçu pour annoter/recadrer et attend votre question.", es: "Modo manual: abre primero la vista previa para anotar/recortar y espera tu pregunta.", pt: "Modo manual: abre primeiro a prévia para anotar/recortar e aguarda sua pergunta.", it: "Modalità manuale: apre prima l'anteprima per annotare/ritagliare e attende la tua domanda.", pl: "Tryb ręczny: otwiera najpierw podgląd do rysowania/przycinania i czeka na Twoje pytanie.", ja: "手動モード：まず画像プレビューを開き、矢印・切り抜きや質問の入力を待ってからAIを実行します。", zh: "手动模式：先打开截图预览供标注或裁剪，输入问题后再调用 AI。" },
+    tipAuthToggle: { en: "Switch between CLI subscription auth (agy/claude/grok Pro) and API key for this model or provider", no: "Bytt mellom vanlig CLI-innlogging (agy/claude/grok Pro-abonnement) og API-nøkkel for denne modellen eller tilbyderen", sv: "Växla mellan CLI-inloggning (Pro-abonnemang) och API-nyckel", da: "Skift mellem CLI-login (Pro-abonnement) og API-nøgle", de: "Zwischen CLI-Abo-Login (agy/claude/grok Pro) und API-Key wechseln", fr: "Basculer entre l'authentification CLI (abonnement Pro) et la clé API", es: "Cambiar entre autenticación CLI (suscripción Pro) y clave API", pt: "Alternar entre autenticação CLI (assinatura Pro) e chave API", it: "Passa tra autenticazione CLI (abbonamento Pro) e chiave API", pl: "Przełącz między logowaniem CLI (subskrypcja Pro) a kluczem API", ja: "CLI認証（Proサブスクリプション）とAPIキーを切り替えます", zh: "在 CLI 订阅认证与 API 密钥之间切换" },
     reason:        { en: "Show visual reasoning", no: "Vis resonnering", sv: "Visa resonemang", da: "Vis ræsonnement", de: "Begründung anzeigen", fr: "Afficher le raisonnement", es: "Mostrar razonamiento", pt: "Mostrar raciocínio", it: "Mostra ragionamento", pl: "Pokaż tok myślenia", ja: "推論の根拠を表示", zh: "显示视觉推理" },
     language:      { en: "Language", no: "Språk", sv: "Språk", da: "Sprog", de: "Sprache", fr: "Langue", es: "Idioma", pt: "Idioma", it: "Lingua", pl: "Język", ja: "言語", zh: "语言" },
     pinnedSec:     { en: "Pinned Prompts", no: "Lagrede spørsmål", sv: "Fästa frågor", da: "Fastgjorte spørgsmål", de: "Gepinnte Prompts", fr: "Prompts épinglés", es: "Prompts fijados", pt: "Prompts fixados", it: "Prompt fissati", pl: "Przypięte pytania", ja: "ピン留めプロンプト", zh: "固定提示词" },
@@ -149,7 +207,33 @@ BarWidget {
     posTileLeft:   { en: "Tile L", no: "Tile V", sv: "Tile V", da: "Tile V", de: "Tile L", fr: "Tile G", es: "Tile I", pt: "Tile E", it: "Tile S", pl: "Tile L", ja: "左タイル", zh: "左平铺" },
     posTileRight:  { en: "Tile R", no: "Tile H", sv: "Tile H", da: "Tile H", de: "Tile R", fr: "Tile D", es: "Tile D", pt: "Tile D", it: "Tile D", pl: "Tile P", ja: "右タイル", zh: "右平铺" },
     tipPosFloat:   { en: "Floating HUD (click-through outside card + drag header freely anywhere on screen)", no: "Flytende HUD (klikk rett gjennom utenfor vinduet + dra topplinjen fritt hvor du vil på skjermen)", sv: "Flytande HUD (klicka utanför för andra appar + dra rubriken fritt)", da: "Flydende HUD (klik udenfor for andre apps + træk toppen frit)", de: "Schwebendes HUD (Klicks außerhalb gehen durch + Leiste frei verschiebbar)", fr: "HUD flottant (clics libres hors du HUD + déplaçable par l'en-tête)", es: "HUD flotante (clics libres fuera + arrastra la barra donde quieras)", pt: "HUD flutuante (cliques livres fora + arraste o topo livremente)", it: "HUD flottante (clic liberi fuori + trascinabile dall'intestazione)", pl: "Pływający HUD (klikanie poza oknem działa + dowolne przesuwanie)", ja: "フローティングHUD（外側クリック透過＋ヘッダーを自由にドラッグ可能）", zh: "悬浮 HUD（窗口外可自由点击其他应用 + 拖动顶部自由移动）" },
-    tipPosTile:    { en: "Hyprland Tiled Sidebar — reserves screen space so your tiled windows resize neatly alongside Aeye with zero overlap", no: "Hyprland Tiled sidepanel — reserverer plass i flisleggingen så vinduene dine automatisk tilpasser seg ved siden av Aeye uten overlapp", sv: "Hyprland Tiled sidopanel — reserverar utrymme så dina fönster flisas snyggt bredvid Aeye", da: "Hyprland Tiled sidepanel — reserverer plads så dine vinduer tiles pænt ved siden af Aeye", de: "Hyprland Tiled Sidebar — reserviert Platz im Tiling-Layout ohne Überlappung", fr: "Panneau latéral Hyprland Tiled — réserve l'espace pour vos fenêtres sans chevauchement", es: "Panel lateral Hyprland Tiled — reserva espacio para que tus ventanas se ajusten junto a Aeye", pt: "Barra lateral Hyprland Tiled — reserva espaço para suas janelas sem sobreposição", it: "Barra laterale Hyprland Tiled — riserva spazio alle finestre senza sovrapposizioni", pl: "Panel boczny Hyprland Tiled — rezerwuje miejsce w układzie okien bez nakładania", ja: "Hyprlandタイル用サイドバー — 領域を確保し他ウィンドウと重ならず並列表示します", zh: "Hyprland 平铺侧边栏 — 自动预留屏幕空间，与平铺窗口并排显示不遮挡" }
+    tipPosTile:    { en: "Hyprland Tiled Sidebar — reserves screen space so your tiled windows resize neatly alongside Aeye with zero overlap", no: "Hyprland Tiled sidepanel — reserverer plass i flisleggingen så vinduene dine automatisk tilpasser seg ved siden av Aeye uten overlapp", sv: "Hyprland Tiled sidopanel — reserverar utrymme så dina fönster flisas snyggt bredvid Aeye", da: "Hyprland Tiled sidepanel — reserverer plads så dine vinduer tiles pænt ved siden af Aeye", de: "Hyprland Tiled Sidebar — reserviert Platz im Tiling-Layout ohne Überlappung", fr: "Panneau latéral Hyprland Tiled — réserve l'espace pour vos fenêtres sans chevauchement", es: "Panel lateral Hyprland Tiled — reserva espacio para que tus ventanas se ajusten junto a Aeye", pt: "Barra lateral Hyprland Tiled — reserva espaço para suas janelas sem sobreposição", it: "Barra laterale Hyprland Tiled — riserva spazio alle finestre senza sovrapposizioni", pl: "Panel boczny Hyprland Tiled — rezerwuje miejsce w układzie okien bez nakładania", ja: "Hyprlandタイル用サイドバー — 領域を確保し他ウィンドウと重ならず並列表示します", zh: "Hyprland 平铺侧边栏 — 自动预留屏幕空间，与平铺窗口并排显示不遮挡" },
+    options:       { en: "Options", no: "Valg", sv: "Alternativ", da: "Valg", de: "Optionen", fr: "Options", es: "Opciones", pt: "Opções", it: "Opzioni", pl: "Opcje", ja: "設定", zh: "选项" },
+    tipOptions:    { en: "Behavior toggles, HUD placement, AI context, API keys & pinned prompts", no: "Oppførsel, HUD-plassering, AI-kontekst, API-nøkler og lagrede spørsmål", sv: "Inställningar, HUD-placering, AI-kontext, API-nycklar och fästa frågor", da: "Indstillinger, HUD-placering, AI-kontekst, API-nøgler og fastgjorte spørgsmål", de: "Verhalten, HUD-Position, KI-Kontext, API-Keys & gepinnte Prompts", fr: "Options, position du HUD, contexte IA, clés API et prompts épinglés", es: "Opciones, posición del HUD, contexto IA, claves API y prompts fijados", pt: "Opções, posição do HUD, contexto IA, chaves API e prompts fixados", it: "Opzioni, posizione HUD, contesto IA, chiavi API e prompt fissati", pl: "Opcje, położenie HUD, kontekst AI, klucze API i przypięte pytania", ja: "動作設定・HUD配置・AIコンテキスト・APIキー・ピン留めプロンプト", zh: "行为设置、HUD 位置、AI 上下文、API 密钥和固定提示" },
+    tipOptionsBack:{ en: "Back to quick capture & AI models", no: "Tilbake til skjermbilde og AI-modeller", sv: "Tillbaka till skärmbild och AI-modeller", da: "Tilbage til skærmbillede og AI-modeller", de: "Zurück zu Aufnahme & KI-Modellen", fr: "Retour à la capture et aux modèles IA", es: "Volver a captura y modelos IA", pt: "Voltar para captura e modelos IA", it: "Torna a cattura e modelli IA", pl: "Powrót do zrzutu i modeli AI", ja: "撮影とAIモデル選択に戻る", zh: "返回截图与 AI 模型" },
+    contextSec:    { en: "AI Context & .md", no: "AI-kontekst & .md", sv: "AI-kontext & .md", da: "AI-kontekst & .md", de: "KI-Kontext & .md", fr: "Contexte IA & .md", es: "Contexto IA y .md", pt: "Contexto IA e .md", it: "Contesto IA e .md", pl: "Kontekst AI i .md", ja: "AIコンテキスト & .md", zh: "AI 上下文与 .md" },
+    contextNoteLbl:{ en: "Comment / instructions for AI", no: "Kommentar / instruksjoner til AI", sv: "Kommentar / instruktioner till AI", da: "Kommentar / instruktioner til AI", de: "Kommentar / Anweisungen für KI", fr: "Note / instructions pour l'IA", es: "Nota / instrucciones para la IA", pt: "Nota / instruções para a IA", it: "Nota / istruzioni per l'IA", pl: "Komentarz / instrukcje dla AI", ja: "AIへのメモ・指示", zh: "给 AI 的备注 / 指令" },
+    contextNoteHint:{ en: "Write notes or rules the AI should consider on every screenshot…", no: "Skriv kommentarer eller regler AI-en skal ta hensyn til…", sv: "Skriv anteckningar eller regler som AI:n ska ta hänsyn till…", da: "Skriv noter eller regler som AI'en skal tage hensyn til…", de: "Notizen oder Regeln, die die KI berücksichtigen soll…", fr: "Écrivez des notes ou règles que l'IA doit prendre en compte…", es: "Escribe notas o reglas que la IA deba tener en cuenta…", pt: "Escreva notas ou regras que a IA deve considerar…", it: "Scrivi note o regole che l'IA deve considerare…", pl: "Wpisz uwagi lub zasady, które AI ma uwzględniać…", ja: "AIに常に考慮してほしいメモやルールを入力…", zh: "输入希望 AI 在分析截图时参考的备注或规则…" },
+    contextFileLbl:{ en: "Markdown (.md) file", no: "Markdown (.md)-fil", sv: "Markdown (.md)-fil", da: "Markdown (.md)-fil", de: "Markdown (.md)-Datei", fr: "Fichier Markdown (.md)", es: "Archivo Markdown (.md)", pt: "Arquivo Markdown (.md)", it: "File Markdown (.md)", pl: "Plik Markdown (.md)", ja: "Markdown (.md) ファイル", zh: "Markdown (.md) 文件" },
+    contextFileHint:{ en: "~/Documents/aeye-context.md", no: "~/Documents/aeye-context.md", sv: "~/Documents/aeye-context.md", da: "~/Documents/aeye-context.md", de: "~/Documents/aeye-context.md", fr: "~/Documents/aeye-context.md", es: "~/Documents/aeye-context.md", pt: "~/Documents/aeye-context.md", it: "~/Documents/aeye-context.md", pl: "~/Documents/aeye-context.md", ja: "~/Documents/aeye-context.md", zh: "~/Documents/aeye-context.md" },
+    contextBrowse: { en: "Browse", no: "Velg .md", sv: "Bläddra", da: "Vælg .md", de: "Wählen", fr: "Parcourir", es: "Elegir", pt: "Escolher", it: "Sfoglia", pl: "Wybierz", ja: "選択", zh: "浏览" },
+    contextEdit:   { en: "Edit .md", no: "Rediger .md", sv: "Redigera .md", da: "Rediger .md", de: ".md öffnen", fr: "Éditer .md", es: "Editar .md", pt: "Editar .md", it: "Modifica .md", pl: "Edytuj .md", ja: ".mdを編集", zh: "编辑 .md" },
+    contextNewMd:  { en: "Create .md", no: "Lag .md", sv: "Skapa .md", da: "Opret .md", de: ".md erstellen", fr: "Créer .md", es: "Crear .md", pt: "Criar .md", it: "Crea .md", pl: "Utwórz .md", ja: ".mdを作成", zh: "新建 .md" },
+    contextOff:    { en: "Off", no: "Av", sv: "Av", da: "Fra", de: "Aus", fr: "Inactif", es: "Off", pt: "Off", it: "Off", pl: "Wył.", ja: "オフ", zh: "关闭" },
+    contextNoteTag:{ en: "Note", no: "Notat", sv: "Not", da: "Note", de: "Notiz", fr: "Note", es: "Nota", pt: "Nota", it: "Nota", pl: "Notatka", ja: "メモ", zh: "备注" },
+    tipContextSec: { en: "Add a custom comment or attach a .md file that every AI reads and considers with your screenshots", no: "Legg inn en kommentar eller knytt til en .md-fil som alle AI-ene leser og tar hensyn til", sv: "Lägg till en kommentar eller .md-fil som AI:n läser och tar hänsyn till", da: "Tilføj en kommentar eller .md-fil som AI'en læser og tager hensyn til", de: "Eigene Hinweise oder eine .md-Datei anhängen, die jede KI berücksichtigt", fr: "Ajouter une note ou un fichier .md que chaque IA prend en compte", es: "Añade un comentario o archivo .md que cada IA tendrá en cuenta", pt: "Adicione uma nota ou arquivo .md que toda IA levará em conta", it: "Aggiungi una nota o un file .md che ogni IA considererà", pl: "Dodaj komentarz lub plik .md uwzględniany przez każde AI", ja: "AIがすべてのスクリーンショット解析で参照するメモや.mdファイルを設定", zh: "添加备注或附加 .md 文件，让所有 AI 在分析截图时自动参考" },
+    tipContextBrowse:{ en: "Pick an existing .md or .txt file from disk", no: "Velg en eksisterende .md- eller .txt-fil fra disk", sv: "Välj en befintlig .md- eller .txt-fil", da: "Vælg en eksisterende .md- eller .txt-fil", de: "Bestehende .md- oder .txt-Datei auswählen", fr: "Choisir un fichier .md ou .txt existant", es: "Elegir un archivo .md o .txt existente", pt: "Escolher um arquivo .md ou .txt existente", it: "Scegli un file .md o .txt esistente", pl: "Wybierz istniejący plik .md lub .txt", ja: "既存の.md/.txtファイルを選択", zh: "从磁盘选择已有的 .md 或 .txt 文件" },
+    tipContextEdit:{ en: "Open the .md file in your default Omarchy editor (creates ~/.config/omarchy/aeye-context.md if none is set)", no: "Åpne .md-filen i din standard Omarchy-editor (oppretter ~/.config/omarchy/aeye-context.md hvis ingen er valgt)", sv: "Öppna .md-filen i din Omarchy-editor (skapar standardfil om ingen valts)", da: "Åbn .md-filen i din Omarchy-editor (opretter standardfil hvis ingen er valgt)", de: "Öffnet die .md-Datei im Standard-Editor (erstellt Standarddatei falls leer)", fr: "Ouvrir le fichier .md dans l'éditeur Omarchy (crée le fichier par défaut si vide)", es: "Abre el archivo .md en tu editor Omarchy (crea uno por defecto si está vacío)", pt: "Abre o arquivo .md no editor Omarchy (cria um padrão se vazio)", it: "Apri il file .md nell'editor Omarchy (crea quello predefinito se vuoto)", pl: "Otwórz plik .md w edytorze Omarchy (utworzy domyślny, jeśli pusty)", ja: "既定エディタで.mdを開く（未設定時はデフォルト作成）", zh: "在默认编辑器中打开 .md 文件（若未设置则自动创建默认文件）" },
+    activeModelsHdr:{ en: "Active models", no: "Aktive modeller", sv: "Aktiva modeller", da: "Aktive modeller", de: "Aktive Modelle", fr: "Modèles actifs", es: "Modelos activos", pt: "Modelos ativos", it: "Modelli attivi", pl: "Aktywne modele", ja: "利用可能なモデル", zh: "可用模型" },
+    loadingModels: { en: "Fetching active models…", no: "Henter aktive modeller…", sv: "Hämtar aktiva modeller…", da: "Henter aktive modeller…", de: "Lade aktive Modelle…", fr: "Chargement des modèles…", es: "Cargando modelos activos…", pt: "Carregando modelos ativos…", it: "Caricamento modelli…", pl: "Pobieranie modeli…", ja: "モデル一覧を取得中…", zh: "正在获取可用模型…" },
+    modelAdded:    { en: "Added", no: "Lagt til", sv: "Tillagd", da: "Tilføjet", de: "Aktiv", fr: "Ajouté", es: "Añadido", pt: "Adicionado", it: "Aggiunto", pl: "Dodano", ja: "追加済", zh: "已添加" },
+    tipRefreshMods:{ en: "Refresh live active models from installed CLIs (agy / grok)", no: "Oppdater aktive modeller direkte fra installerte CLI-er (agy / grok)", sv: "Uppdatera aktiva modeller från installerade CLI:er", da: "Opdater aktive modeller fra installerede CLI'er", de: "Aktive Modelle aus installierten CLIs neu laden", fr: "Actualiser les modèles actifs depuis les CLI installés", es: "Actualizar modelos activos desde las CLI instaladas", pt: "Atualizar modelos ativos das CLIs instaladas", it: "Aggiorna i modelli attivi dalle CLI installate", pl: "Odśwież aktywne modele z zainstalowanych CLI", ja: "インストール済みCLIから最新モデルを再取得", zh: "从已安装的 CLI 刷新可用模型列表" },
+    autoDelegate:  { en: "Smart AI handoff on follow-up", no: "Smart AI-stafett ved oppfølging", sv: "Smart AI-stafett vid uppföljning", da: "Smart AI-stafet ved opfølgning", de: "Smartes KI-Handoff bei Nachfrage", fr: "Relais IA intelligent en suivi", es: "Relevo IA inteligente en seguimiento", pt: "Repasse inteligente de IA no chat", it: "Passaggio IA intelligente nel seguito", pl: "Inteligentne przekazanie AI w czacie", ja: "追質問で最適なAIへ自動バトンタッチ", zh: "追问时智能移交最佳 AI 模型" },
+    autoDelegateSub:{ en: "Fast model on 1st reply → specialist model in chat", no: "Rask modell på 1. svar → spesialistmodell når du chatter videre", sv: "Snabb modell på 1:a svar → specialist i chatt", da: "Hurtig model på 1. svar → specialist i chat", de: "Schnelles 1. Modell → Spezialist im Chat", fr: "Modèle rapide au 1er tour → spécialiste ensuite", es: "Modelo rápido al inicio → especialista en el chat", pt: "Modelo rápido no 1º turno → especialista no chat", it: "Modello rapido al 1° turno → specialista in chat", pl: "Szybki model na start → specjalista w czacie", ja: "初回は高速モデル→深掘りは専門モデルへ自動切替", zh: "首轮快速响应 → 追问自动切换专业模型" },
+    tipAutoDelegate:{ en: "Zero double-wait: your chosen fast model answers the initial capture in 1–2s, then automatically hands follow-up chat over to the strongest active model for code (Claude), deep logic (Argon/Neon) or realtime tech (Grok).", no: "Null dobbel ventetid: hurtigmodellen tar første skjermbildesvar på 1–2s, og gir automatisk stafettpinnen videre til beste aktive spesialist (Claude på kode, Argon/Neon på dyp logikk, Grok på sanntid) når du svarer i chatten.", sv: "Ingen dubbel väntetid: snabb modell tar första svaret och lämnar över uppföljning till bästa aktiva specialist.", da: "Ingen dobbelt ventetid: hurtig model tager første svar og giver stafetten videre til bedste aktive specialist i chatten.", de: "Keine doppelte Wartezeit: schnelles Modell für die erste Analyse, automatische Übergabe an den besten Spezialisten im Chat.", fr: "Zéro double attente : modèle rapide au premier tour, puis relais automatique au meilleur spécialiste actif dans le chat.", es: "Sin doble espera: modelo rápido en la primera respuesta y relevo automático al mejor especialista activo al conversar.", pt: "Sem espera dupla: modelo rápido na primeira resposta e repasse automático ao melhor especialista ativo no chat.", it: "Zero doppia attesa: modello rapido al primo turno e passaggio automatico al miglior specialista attivo nella chat.", pl: "Zero podwójnego czekania: szybki model na start, potem automatyczne przekazanie do najlepszego specjalisty w czacie.", ja: "待ち時間ゼロ：初回は高速モデルが即答し、チャットでの深掘りはコード・論理・最新情報の最適モデルへ自動引き継ぎします。", zh: "无双重等待：首轮由快速模型即刻回答，继续对话时自动移交给最擅长代码、深度逻辑或实时信息的已启用模型。" },
+    agentMem:      { en: "Read installed AI agent memory", no: "Les minne fra installerte AI-er", sv: "Läs minne från installerade AI:er", da: "Læs hukommelse fra installerede AI'er", de: "KI-Agenten-Memory einbeziehen", fr: "Lire la mémoire des agents IA installés", es: "Leer memoria de agentes IA instalados", pt: "Ler memória dos agentes de IA instalados", it: "Leggi memoria degli agenti IA installati", pl: "Czytaj pamięć zainstalowanych agentów AI", ja: "インストール済みAIのメモリを参照", zh: "读取已安装 AI 代理的记忆" },
+    agentMemSub:   { en: "Sync MEMORY.md / CLAUDE.md / GEMINI.md", no: "Synk MEMORY.md / CLAUDE.md / GEMINI.md", sv: "Synka MEMORY.md / CLAUDE.md / GEMINI.md", da: "Synk MEMORY.md / CLAUDE.md / GEMINI.md", de: "MEMORY.md / CLAUDE.md / GEMINI.md synchronisieren", fr: "Synchroniser MEMORY.md / CLAUDE.md / GEMINI.md", es: "Sincronizar MEMORY.md / CLAUDE.md / GEMINI.md", pt: "Sincronizar MEMORY.md / CLAUDE.md / GEMINI.md", it: "Sincronizza MEMORY.md / CLAUDE.md / GEMINI.md", pl: "Synchronizuj MEMORY.md / CLAUDE.md / GEMINI.md", ja: "MEMORY.md / CLAUDE.md / GEMINI.md を同期", zh: "同步 MEMORY.md / CLAUDE.md / GEMINI.md" },
+    tipAgentMem:   { en: "Read-only sync of curated Markdown memory files (~/.grok/memory-v2/*/MEMORY.md, ~/.claude/CLAUDE.md, ~/.gemini/GEMINI.md) so Aeye automatically knows your preferences and stack.", no: "Leser automatisk oppsummerte Markdown-minnefiler (~/.grok/memory-v2/*/MEMORY.md, ~/.claude/CLAUDE.md, ~/.gemini/GEMINI.md) så Aeye kjenner oppsettet og preferansene dine.", sv: "Läser Markdown-minnesfiler från Grok, Claude och Gemini så Aeye känner till dina preferenser.", da: "Læser Markdown-hukommelsesfiler fra Grok, Claude og Gemini så Aeye kender dine præferencer.", de: "Liest kuratierte Markdown-Memory-Dateien von Grok, Claude und Gemini schreibgeschützt ein.", fr: "Lecture seule des fichiers mémoire Markdown de Grok, Claude et Gemini pour connaître vos préférences.", es: "Lectura de archivos de memoria Markdown de Grok, Claude y Gemini para conocer tus preferencias.", pt: "Leitura dos arquivos de memória Markdown do Grok, Claude e Gemini para conhecer suas preferências.", it: "Lettura dei file di memoria Markdown di Grok, Claude e Gemini per conoscere le tue preferenze.", pl: "Tylko do odczytu plików pamięci Markdown z Grok, Claude i Gemini.", ja: "Grok・Claude・GeminiのMarkdownメモリファイルを読み取り専用で参照します。", zh: "只读同步 Grok、Claude 和 Gemini 的 Markdown 记忆文件，自动了解你的偏好与技术栈。" }
   })
 
   function t(key) {
@@ -158,13 +242,34 @@ BarWidget {
     return entry[activeLang] || entry["en"] || key
   }
 
-  readonly property var modelChoices: [
-    { choiceIndex: 0, vendorKey: "gemini",    id: "gemini-3.8-flash-high",    label: "Flash",      vendor: "Gemini",    badge: "OCR & Quick",     tipKey: "tipFlash" },
-    { choiceIndex: 1, vendorKey: "gemini",    id: "gemini-4-argon-high",      label: "Argon",      vendor: "Gemini",    badge: "Deep Logic",      tipKey: "tipArgon" },
-    { choiceIndex: 2, vendorKey: "anthropic", id: "claude-sonnet-5-5-medium", label: "Sonnet 5.5", vendor: "Anthropic", badge: "Code & Text",     tipKey: "tipSonnet" },
-    { choiceIndex: 3, vendorKey: "xai",       id: "grok-4.7",                 label: "Grok 4.7",   vendor: "xAI",       badge: "Realtime & Tech", tipKey: "tipGrok" },
-    { choiceIndex: 4, vendorKey: "openai",    id: "gpt-4o",                   label: "GPT-4o",     vendor: "OpenAI",    badge: "UI & General",    tipKey: "tipOpenai" }
+  readonly property var baseModelChoices: [
+    { choiceIndex: 0, vendorKey: "gemini",    id: "gemini-3.8-flash-high",    label: "Flash",      vendor: "Gemini",    badge: "OCR & Quick",     tipKey: "tipFlash",  custom: false },
+    { choiceIndex: 1, vendorKey: "gemini",    id: "gemini-4-argon-high",      label: "Argon",      vendor: "Gemini",    badge: "Deep Logic",      tipKey: "tipArgon",  custom: false },
+    { choiceIndex: 2, vendorKey: "anthropic", id: "claude-sonnet-5-5-medium", label: "Sonnet 5.5", vendor: "Anthropic", badge: "Code & Text",     tipKey: "tipSonnet", custom: false },
+    { choiceIndex: 3, vendorKey: "xai",       id: "grok-4.7",                 label: "Grok 4.7",   vendor: "xAI",       badge: "Realtime & Tech", tipKey: "tipGrok",   custom: false },
+    { choiceIndex: 4, vendorKey: "openai",    id: "gpt-4o",                   label: "GPT-4o",     vendor: "OpenAI",    badge: "UI & General",    tipKey: "tipOpenai", custom: false }
   ]
+
+  readonly property var modelChoices: {
+    var out = []
+    for (var i = 0; i < baseModelChoices.length; i++) out.push(baseModelChoices[i])
+    for (var j = 0; j < customModels.length; j++) {
+      var cm = customModels[j]
+      if (cm && cm.id) {
+        out.push({
+          choiceIndex: baseModelChoices.length + j,
+          vendorKey: cm.vendorKey || "gemini",
+          id: cm.id,
+          label: cm.label || cm.id,
+          vendor: cm.vendor || "Custom",
+          badge: cm.badge || "Custom",
+          tipKey: "hoverDefault",
+          custom: true
+        })
+      }
+    }
+    return out
+  }
 
   function isVendorReady(vendorKey) {
     for (var i = 0; i < providerStatuses.length; i++) {
@@ -172,6 +277,57 @@ BarWidget {
         return providerStatuses[i].ready === true
     }
     return false
+  }
+
+  function providerStatusFor(vendorKey) {
+    for (var i = 0; i < providerStatuses.length; i++) {
+      if (providerStatuses[i] && providerStatuses[i].vendor === vendorKey)
+        return providerStatuses[i]
+    }
+    return null
+  }
+
+  function modelRequiresApiOnly(vendorKey, id) {
+    var low = String(id || "").toLowerCase()
+    if (vendorKey === "openai" && low.indexOf("gpt-oss-") !== 0) return true
+    if (low.indexOf("grok-4.20-") === 0 || low.indexOf("grok-4-1-") === 0 || low.indexOf("grok-4.6") === 0 || low.indexOf("grok-4.5") === 0 || low.indexOf("grok-4.3") === 0) return true
+    if (low.indexOf("gemini-2.5-") === 0) return true
+    return false
+  }
+
+  function canModelToggleAuth(vendorKey, id) {
+    if (modelRequiresApiOnly(vendorKey, id)) return false
+    var st = providerStatusFor(vendorKey)
+    return st !== null && st.hasCli === true && st.hasApi === true
+  }
+
+  function effectiveAuthForModel(vendorKey, id) {
+    if (modelRequiresApiOnly(vendorKey, id)) return "api"
+    var st = providerStatusFor(vendorKey)
+    if (modelAuthMode && modelAuthMode[id]) {
+      var m = String(modelAuthMode[id])
+      if (m === "api" && st && st.hasApi) return "api"
+      if (m === "cli" && st && st.hasCli) return "cli"
+    }
+    if (st && st.authMode) return String(st.authMode)
+    return (vendorKey === "gemini" || vendorKey === "anthropic") ? "cli" : "api"
+  }
+
+  function isModelAdded(id) {
+    for (var i = 0; i < modelChoices.length; i++) {
+      if (modelChoices[i] && modelChoices[i].id === id) return true
+    }
+    return false
+  }
+
+  function modelDetailsFor(vendorKey, id) {
+    var list = availableModels && availableModels[vendorKey]
+    if (Array.isArray(list)) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id && list[i].details) return list[i].details
+      }
+    }
+    return ""
   }
 
   readonly property var activeModels: {
@@ -244,7 +400,7 @@ BarWidget {
         text: tRow.subtitle
         color: root.dim
         font.family: root.face
-        font.pixelSize: Math.max(10, Style.font.caption - 1)
+        font.pixelSize: Style.font.caption
         elide: Text.ElideRight
       }
     }
@@ -257,9 +413,9 @@ BarWidget {
       width: Style.space(32)
       height: Style.space(18)
       radius: height / 2
-      color: tRow.checked ? Util.alpha(tRow.activeCol, 0.35) : Util.alpha(root.fg, 0.12)
+      color: tRow.checked ? Util.alpha(tRow.activeCol, 0.35) : Util.alpha(root.fg, 0.10)
       border.width: 1
-      border.color: tRow.checked ? tRow.activeCol : root.line
+      border.color: tRow.checked ? tRow.activeCol : root.softLine
       Behavior on color { ColorAnimation { duration: Style.duration(140) } }
 
       Rectangle {
@@ -290,94 +446,28 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  // Top-bar animated Spark Pupil icon (Animation A: Spin + Pulse)
+  // Top-bar Utvalg mark: solid sculptural eye inside four crisp screenshot corner brackets.
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     tooltipText: root.barTooltip
-    active: root.opened || root.analysing || root.hasUnreadAnswer
+    active: root.isActive
     useActiveColor: false
     iconComponent: Component {
       Item {
         id: iconRoot
-        width: Style.space(18)
-        height: Style.space(18)
+        width: Style.bar.iconSize
+        height: Style.bar.iconSize
 
-        readonly property color strokeCol: root.iconColor
-        readonly property bool animActive: root.analysing && !root.paused && root.visible && !(root.bar && root.bar.barHidden) && !Style.reduceMotion && Style.duration(100) > 0
-
-        onStrokeColChanged: {
-          eyeCanvas.requestPaint()
-          sparkCanvas.requestPaint()
-        }
-
-        Canvas {
-          id: eyeCanvas
+        EyeMark {
           anchors.fill: parent
-          onPaint: {
-            var ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
-            var s = width / 24.0
-            ctx.save()
-            ctx.scale(s, s)
-            ctx.strokeStyle = iconRoot.strokeCol
-            ctx.lineWidth = 2.1
-            ctx.lineCap = "round"
-            ctx.lineJoin = "round"
-            ctx.beginPath()
-            ctx.moveTo(3, 8.5); ctx.lineTo(3, 5.5); ctx.quadraticCurveTo(3, 3, 5.5, 3); ctx.lineTo(8.5, 3)
-            ctx.moveTo(15.5, 3); ctx.lineTo(18.5, 3); ctx.quadraticCurveTo(21, 3, 21, 5.5); ctx.lineTo(21, 8.5)
-            ctx.moveTo(21, 15.5); ctx.lineTo(21, 18.5); ctx.quadraticCurveTo(21, 21, 18.5, 21); ctx.lineTo(15.5, 21)
-            ctx.moveTo(8.5, 21); ctx.lineTo(5.5, 21); ctx.quadraticCurveTo(3, 21, 3, 18.5); ctx.lineTo(3, 15.5)
-            ctx.stroke()
-            ctx.restore()
-          }
-        }
-
-        Canvas {
-          id: sparkCanvas
-          anchors.fill: parent
-          transformOrigin: Item.Center
-          onPaint: {
-            var ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
-            var s = width / 24.0
-            ctx.save()
-            ctx.scale(s, s)
-            ctx.fillStyle = iconRoot.strokeCol
-            ctx.beginPath()
-            ctx.moveTo(12, 6.2)
-            ctx.lineTo(13.6, 10.4)
-            ctx.lineTo(17.8, 12)
-            ctx.lineTo(13.6, 13.6)
-            ctx.lineTo(12, 17.8)
-            ctx.lineTo(10.4, 13.6)
-            ctx.lineTo(6.2, 12)
-            ctx.lineTo(10.4, 10.4)
-            ctx.closePath()
-            ctx.fill()
-            ctx.restore()
-          }
-
-          ParallelAnimation {
-            running: iconRoot.animActive
-            loops: Animation.Infinite
-            onRunningChanged: {
-              if (!running) {
-                sparkCanvas.rotation = 0
-                sparkCanvas.scale = 1.0
-              }
-            }
-            SequentialAnimation {
-              NumberAnimation { target: sparkCanvas; property: "rotation"; from: 0; to: 90; duration: Style.duration(950); easing.type: Easing.InOutSine }
-              NumberAnimation { target: sparkCanvas; property: "rotation"; from: 90; to: 180; duration: Style.duration(950); easing.type: Easing.InOutSine }
-            }
-            SequentialAnimation {
-              NumberAnimation { target: sparkCanvas; property: "scale"; from: 0.84; to: 1.16; duration: Style.duration(950); easing.type: Easing.InOutSine }
-              NumberAnimation { target: sparkCanvas; property: "scale"; from: 1.16; to: 0.84; duration: Style.duration(950); easing.type: Easing.InOutSine }
-            }
-          }
+          color: root.bar ? root.bar.barForeground : Commons.Color.foreground
+          accentColor: root.colAnalysing
+          readyColor: root.colSuccess
+          active: root.isActive
+          ready: root.hasUnreadAnswer
+          scanning: root.analysing && !root.paused && root.visible && !(root.bar && root.bar.barHidden)
         }
 
         Rectangle {
@@ -392,8 +482,8 @@ BarWidget {
           SequentialAnimation on opacity {
             running: root.hasUnreadAnswer && root.visible && !(root.bar && root.bar.barHidden) && !Style.reduceMotion && Style.duration(100) > 0
             loops: Animation.Infinite
-            NumberAnimation { from: 1.0; to: 0.35; duration: Style.duration(700); easing.type: Easing.InOutSine }
-            NumberAnimation { from: 0.35; to: 1.0; duration: Style.duration(700); easing.type: Easing.InOutSine }
+            NumberAnimation { from: 1.0; to: 0.45; duration: Style.duration(700); easing.type: Easing.Linear }
+            NumberAnimation { from: 0.45; to: 1.0; duration: Style.duration(700); easing.type: Easing.Linear }
           }
         }
       }
@@ -408,7 +498,7 @@ BarWidget {
     }
   }
 
-  // Native Omarchy Bar Popout: Quick Capture + All Aeye Settings + API Keys
+  // Native Omarchy Bar Popout: Quick Capture + Model Picker (Main) & Options page
   KeyboardPanel {
     id: popout
     anchorItem: button
@@ -416,15 +506,20 @@ BarWidget {
     bar: root.bar
     open: root.opened
     focusTarget: popoutKeys
+    readonly property real activeBodyHeight: root.optionsPage ? optionsPageCol.implicitHeight : mainPageCol.implicitHeight
     contentWidth: popout.fittedContentWidth(Style.space(376))
-    contentHeight: popout.fittedContentHeight(popoutHeader.height + Style.space(10) + popoutCol.implicitHeight + Style.space(10) + hoverFooter.height)
+    contentHeight: popout.fittedContentHeight(popoutHeader.height + Style.space(10) + activeBodyHeight + Style.space(10) + hoverFooter.height)
 
     FocusScope {
       id: popoutKeys
       anchors.fill: parent
-      Keys.onEscapePressed: root.close()
+      Keys.onEscapePressed: {
+        if (root.editingVendor !== "") root.editingVendor = ""
+        else if (root.optionsPage) root.optionsPage = false
+        else root.close()
+      }
 
-      // 1. PINNED TOP HEADER — Theme-native orb wordmark (orb + Aeye | AI VISION)
+      // 1. PINNED TOP HEADER — dynamic Aeye logo + gradient AI VISION + Options & language pills
       Item {
         id: popoutHeader
         anchors.top: parent.top
@@ -432,119 +527,140 @@ BarWidget {
         anchors.right: parent.right
         height: Style.space(34)
 
-          Item {
+          Row {
             id: brandWordmark
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            width: wmRow.implicitWidth
-            height: Style.space(32)
+            spacing: Style.space(8)
+
+            EyeMark {
+              id: aEyeLogo
+              width: Style.space(22)
+              height: Style.space(22)
+              anchors.verticalCenter: parent.verticalCenter
+              color: root.fg
+              accentColor: Commons.Color.accent
+              readyColor: root.colSuccess
+              active: true
+              ready: root.hasUnreadAnswer
+              scanning: root.analysing && !root.paused
+            }
 
             Row {
-              id: wmRow
-              anchors.left: parent.left
-              anchors.top: parent.top
-              spacing: Style.space(5)
-
-              // Glass orb eye mark (live theme colors)
-              Canvas {
-                id: aEyeLogo
-                width: Style.space(26)
-                height: Style.space(26)
-                anchors.verticalCenter: parent.verticalCenter
-                property color colA: Commons.Color.accent
-                property color colEye: root.fg
-                property color colSpark: root.colAnalysing
-                onColAChanged: requestPaint()
-                onColEyeChanged: requestPaint()
-                onColSparkChanged: requestPaint()
-                onPaint: {
-                  var ctx = getContext("2d")
-                  ctx.clearRect(0, 0, width, height)
-                  var s = width / 100.0
-                  ctx.save()
-                  ctx.scale(s, s)
-                  // glass orb
-                  var g = ctx.createRadialGradient(40, 36, 4, 50, 50, 46)
-                  g.addColorStop(0, Qt.lighter(colA, 1.5)); g.addColorStop(0.6, colA); g.addColorStop(1, Qt.darker(colA, 1.9))
-                  ctx.fillStyle = g
-                  ctx.beginPath(); ctx.arc(50, 50, 44, 0, Math.PI * 2); ctx.fill()
-                  // almond lens
-                  ctx.fillStyle = Qt.rgba(1, 1, 1, 0.16)
-                  ctx.strokeStyle = Qt.rgba(1, 1, 1, 0.45)
-                  ctx.lineWidth = 1.6
-                  ctx.beginPath()
-                  ctx.moveTo(6, 50)
-                  ctx.bezierCurveTo(22, 28, 36, 22, 50, 22)
-                  ctx.bezierCurveTo(64, 22, 78, 28, 94, 50)
-                  ctx.bezierCurveTo(78, 72, 64, 78, 50, 78)
-                  ctx.bezierCurveTo(36, 78, 22, 72, 6, 50)
-                  ctx.closePath(); ctx.fill(); ctx.stroke()
-                  // iris + pupil
-                  ctx.fillStyle = colSpark
-                  ctx.beginPath(); ctx.arc(50, 50, 25, 0, Math.PI * 2); ctx.fill()
-                  ctx.fillStyle = Qt.rgba(0.02, 0.04, 0.1, 0.92)
-                  ctx.beginPath(); ctx.arc(50, 50, 14, 0, Math.PI * 2); ctx.fill()
-                  // spark
-                  ctx.fillStyle = Qt.rgba(1, 1, 1, 1)
-                  ctx.beginPath()
-                  ctx.moveTo(50, 37); ctx.lineTo(53, 47); ctx.lineTo(63, 50); ctx.lineTo(53, 53)
-                  ctx.lineTo(50, 63); ctx.lineTo(47, 53); ctx.lineTo(37, 50); ctx.lineTo(47, 47)
-                  ctx.closePath(); ctx.fill()
-                  ctx.restore()
-                }
-              }
-
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 0
 
               PlainText {
-                id: eyeWord
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Aeye"
-                color: root.fg
+                text: "A"
+                color: Commons.Color.accent
                 font.family: root.face
-                font.pixelSize: Math.round(Style.font.body * 1.25)
+                font.pixelSize: Style.font.heading
                 font.bold: true
-                font.letterSpacing: 0.4
               }
 
-              Column {
-                anchors.verticalCenter: parent.verticalCenter
-                leftPadding: Style.space(5)
-                spacing: 0
-                PlainText {
-                  text: "AI"
-                  color: root.dim
-                  font.family: root.face
-                  font.pixelSize: Math.max(8, Style.font.caption - 3)
-                  font.bold: true
-                  font.letterSpacing: 1.4
-                }
-                PlainText {
-                  text: "VISION"
-                  color: root.dim
-                  font.family: root.face
-                  font.pixelSize: Math.max(8, Style.font.caption - 3)
-                  font.letterSpacing: 1.1
+              PlainText {
+                text: "eye"
+                color: root.fg
+                font.family: root.face
+                font.pixelSize: Style.font.heading
+                font.bold: true
+              }
+            }
+          }
+
+          Row {
+            id: headerRightControls
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            // Options page toggle pill
+            Rectangle {
+              id: headerOptionsPill
+              anchors.verticalCenter: parent.verticalCenter
+              height: Style.space(24)
+              width: hdrOptLbl.implicitWidth + Style.space(16)
+              radius: height / 2
+              color: root.optionsPage
+                ? Util.alpha(Commons.Color.accent, 0.22)
+                : (hdrOptMouse.containsMouse ? root.surfaceHover : root.surface)
+              border.width: 1
+              border.color: (root.optionsPage || hdrOptMouse.containsMouse) ? Commons.Color.accent : root.softLine
+              Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+
+              PlainText {
+                id: hdrOptLbl
+                anchors.centerIn: parent
+                text: (root.optionsPage ? "← " : "⚙ ") + root.t("options")
+                color: (root.optionsPage || hdrOptMouse.containsMouse) ? Commons.Color.accent : root.dim
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              MouseArea {
+                id: hdrOptMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: root.setPopoutHover(containsMouse, root.optionsPage ? root.t("tipOptionsBack") : root.t("tipOptions"))
+                onClicked: {
+                  root.optionsPage = !root.optionsPage
+                  popoutScroll.contentY = 0
                 }
               }
             }
 
-            // Crisp accent underline under Aeye wordmark
+            // Compact Language switcher pill right in header (saves a full row below)
             Rectangle {
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(3)
-              anchors.bottom: parent.bottom
-              width: aEyeLogo.width + Style.space(18) + eyeWord.implicitWidth
-              height: 2
-              radius: 1
-              color: Util.alpha(Commons.Color.accent, 0.55)
+              id: headerLangPill
+              anchors.verticalCenter: parent.verticalCenter
+              height: Style.space(24)
+              width: hdrLangLbl.implicitWidth + Style.space(16)
+              radius: height / 2
+              color: hdrLangMouse.containsMouse ? root.surfaceHover : root.surface
+              border.width: 1
+              border.color: hdrLangMouse.containsMouse ? Commons.Color.accent : root.softLine
+              Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+
+              PlainText {
+                id: hdrLangLbl
+                anchors.centerIn: parent
+                text: "◎ " + root.localeDisplayLabel
+                color: hdrLangMouse.containsMouse ? Commons.Color.accent : root.dim
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              MouseArea {
+                id: hdrLangMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipLang"))
+                onClicked: function(mouse) {
+                  if (root.svc) root.svc.requestCycleLocale(mouse.button === Qt.RightButton ? -1 : 1)
+                }
+              }
             }
           }
 
         MouseArea {
-          anchors.fill: parent
+          anchors.left: parent.left
+          anchors.top: parent.top
+          anchors.bottom: parent.bottom
+          anchors.right: headerRightControls.left
           hoverEnabled: true
-          acceptedButtons: Qt.NoButton
-          onContainsMouseChanged: root.setPopoutHover(containsMouse, root.barTooltip)
+          cursorShape: root.optionsPage ? Qt.PointingHandCursor : Qt.ArrowCursor
+          onContainsMouseChanged: root.setPopoutHover(containsMouse, root.optionsPage ? root.t("tipOptionsBack") : root.barTooltip)
+          onClicked: {
+            if (root.optionsPage) {
+              root.optionsPage = false
+              popoutScroll.contentY = 0
+            }
+          }
         }
       }
 
@@ -558,13 +674,15 @@ BarWidget {
         anchors.bottom: hoverFooter.top
         anchors.bottomMargin: Style.space(10)
         contentWidth: width
-        contentHeight: popoutCol.implicitHeight
+        contentHeight: popout.activeBodyHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height + 2
 
+        // PAGE 1: MAIN (Quick Capture, AI Vision Models, Quick / Full HUD)
         Column {
-          id: popoutCol
+          id: mainPageCol
+          visible: !root.optionsPage
           width: popoutScroll.width - (popoutScroll.contentHeight > popoutScroll.height + 2 ? Style.space(8) : 0)
           spacing: Style.space(10)
 
@@ -618,7 +736,7 @@ BarWidget {
               ? (openMouse.containsMouse ? Util.alpha(root.colSuccess, 0.3) : Util.alpha(root.colSuccess, 0.2))
               : (openMouse.containsMouse ? root.surfaceHover : root.surface)
             border.width: 1
-            border.color: root.hasUnreadAnswer ? root.colSuccess : root.line
+            border.color: root.hasUnreadAnswer ? root.colSuccess : root.softLine
             Behavior on color { ColorAnimation { duration: Style.duration(120) } }
 
             PlainText {
@@ -680,7 +798,7 @@ BarWidget {
             radius: Style.space(7)
             color: sBtnMouse.containsMouse ? Util.alpha(Commons.Color.urgent, 0.26) : root.surface
             border.width: 1
-            border.color: sBtnMouse.containsMouse ? Commons.Color.urgent : root.line
+            border.color: sBtnMouse.containsMouse ? Commons.Color.urgent : root.softLine
 
             PlainText {
               anchors.centerIn: parent
@@ -702,33 +820,54 @@ BarWidget {
           }
         }
 
-        Rectangle { width: parent.width; height: 1; color: root.line; opacity: 0.45 }
-
-        // 3. AI VISION MODEL SELECTOR (only active/ready providers; inactive ones live in API & Providers)
+        // 3. AI VISION MODEL SELECTOR (clean 2-column calm cards — zero neon border clutter)
         Column {
           width: parent.width
           spacing: Style.space(6)
 
           Item {
             width: parent.width
-            height: Style.space(16)
+            height: Style.space(20)
             PlainText {
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
               text: root.t("modelSec")
               color: root.dim
               font.family: root.face
-              font.pixelSize: Math.max(10, Style.font.caption - 1)
+              font.pixelSize: Style.font.caption
               font.bold: true
             }
-            PlainText {
+            Rectangle {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              visible: root.visionWhy !== ""
-              text: root.visionWhy
-              color: Util.alpha(root.fg, 0.45)
-              font.family: root.face
-              font.pixelSize: Math.max(10, Style.font.caption - 1)
+              width: addModLbl.implicitWidth + Style.space(12)
+              height: Style.space(20)
+              radius: height / 2
+              color: root.addModelOpen ? Util.alpha(Commons.Color.accent, 0.2) : (addModMouse.containsMouse ? root.surfaceHover : root.surface)
+              border.width: 1
+              border.color: root.addModelOpen ? Commons.Color.accent : root.softLine
+
+              PlainText {
+                id: addModLbl
+                anchors.centerIn: parent
+                text: root.addModelOpen ? "−" : "+ Add"
+                color: root.addModelOpen ? Commons.Color.accent : root.dim
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              MouseArea {
+                id: addModMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  root.addModelOpen = !root.addModelOpen
+                  if (root.addModelOpen && root.svc && root.availableModelsForVendor.length === 0)
+                    root.svc.requestRefreshAvailableModels(false)
+                }
+              }
             }
           }
 
@@ -748,7 +887,7 @@ BarWidget {
               text: "⚠ " + root.t("noActiveModels")
               color: Commons.Color.urgent
               font.family: root.face
-              font.pixelSize: Math.max(10, Style.font.caption - 1)
+              font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
 
@@ -758,7 +897,9 @@ BarWidget {
               cursorShape: Qt.PointingHandCursor
               onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipApiSec"))
               onClicked: {
+                root.optionsPage = true
                 root.keysExpanded = true
+                popoutScroll.contentY = 0
                 if (root.svc) root.svc.requestRefreshProviders()
               }
             }
@@ -775,42 +916,40 @@ BarWidget {
                 required property var modelData
                 required property int index
                 readonly property bool selected: root.modelId === modelData.id
-                width: (root.activeModels.length % 2 === 1 && index === root.activeModels.length - 1)
-                  ? popoutCol.width
-                  : (popoutCol.width - Style.space(6)) / 2
-                height: Style.space(38)
+                readonly property string effAuth: root.effectiveAuthForModel(modelData.vendorKey, modelData.id)
+                readonly property bool canToggleAuth: root.canModelToggleAuth(modelData.vendorKey, modelData.id)
+                width: (mainPageCol.width - Style.space(6)) / 2
+                height: Style.space(36)
                 radius: Style.space(8)
-                color: selected ? Util.alpha(Commons.Color.accent, 0.18) : (mMouse.containsMouse ? root.surfaceHover : root.surface)
+                color: selected ? Util.alpha(Commons.Color.accent, 0.16) : (mMouse.containsMouse ? root.surfaceHover : root.surface)
                 border.width: 1
-                border.color: selected ? Commons.Color.accent : root.line
+                border.color: selected ? Commons.Color.accent : root.softLine
+                clip: true
                 Behavior on color { ColorAnimation { duration: Style.duration(120) } }
 
                 Column {
-                  anchors.centerIn: parent
-                  spacing: Style.space(1)
-                  Row {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: Style.space(4)
-                    PlainText {
-                      text: modelData.label
-                      color: selected ? Commons.Color.accent : root.fg
-                      font.family: root.face
-                      font.pixelSize: Style.font.caption
-                      font.bold: true
-                    }
-                    PlainText {
-                      text: "· " + modelData.badge
-                      color: root.dim
-                      font.family: root.face
-                      font.pixelSize: Math.max(10, Style.font.caption - 1)
-                    }
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.rightMargin: Style.space(34)
+                  spacing: 1
+                  PlainText {
+                    width: parent.width
+                    text: modelData.label
+                    color: selected ? Commons.Color.accent : root.fg
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    elide: Text.ElideRight
                   }
                   PlainText {
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width
                     text: modelData.vendor
                     color: root.dim
                     font.family: root.face
-                    font.pixelSize: Math.max(10, Style.font.caption - 1)
+                    font.pixelSize: Math.max(9, Style.font.caption - 1)
+                    elide: Text.ElideRight
                   }
                 }
 
@@ -819,202 +958,1052 @@ BarWidget {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
-                  onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t(modelData.tipKey))
+                  onContainsMouseChanged: {
+                    var det = modelData.custom ? root.modelDetailsFor(modelData.vendorKey, modelData.id) : ""
+                    root.setPopoutHover(containsMouse, modelData.custom ? (det !== "" ? det : (modelData.vendor + " · " + modelData.id)) : root.t(modelData.tipKey))
+                  }
                   onClicked: if (root.svc) root.svc.requestPickModel(modelData.choiceIndex)
                 }
-              }
-            }
-          }
-        }
 
-        Rectangle { width: parent.width; height: 1; color: root.line; opacity: 0.45 }
-
-        // 4. SETTINGS TOGGLES + LOCALE
-        Column {
-          width: parent.width
-          spacing: Style.space(2)
-
-          PlainText {
-            text: root.t("settingsSec")
-            color: root.dim
-            font.family: root.face
-            font.pixelSize: Math.max(10, Style.font.caption - 1)
-            font.bold: true
-          }
-
-          ToggleRow {
-            title: root.t("minSend")
-            subtitle: root.t("minSendSub")
-            tip: root.t("tipMinSend")
-            checked: root.minimizeOnSend
-            onToggled: if (root.svc) root.svc.requestSetMinimizeOnSend(!root.minimizeOnSend)
-          }
-
-          ToggleRow {
-            title: root.t("autoScan")
-            subtitle: root.t("autoScanSub")
-            tip: root.t("tipAutoScan")
-            checked: root.autosend
-            onToggled: if (root.svc) root.svc.requestSetAutosend(!root.autosend)
-          }
-
-          ToggleRow {
-            title: root.t("stealth")
-            tip: root.t("tipStealth")
-            checked: root.minimalMode
-            onToggled: if (root.svc) root.svc.requestSetMinimalMode(!root.minimalMode)
-          }
-
-          ToggleRow {
-            title: root.t("reason")
-            tip: root.t("tipReason")
-            checked: root.showReason
-            onToggled: if (root.svc) root.svc.requestSetShowReason(!root.showReason)
-          }
-
-          ToggleRow {
-            title: root.t("sysDebug")
-            subtitle: root.t("sysDebugSub")
-            tip: root.t("tipSysDebug")
-            warnTone: true
-            checked: root.systemDebug
-            onToggled: if (root.svc) root.svc.requestSetSystemDebug(!root.systemDebug)
-          }
-
-          Rectangle {
-            visible: root.systemDebug
-            width: parent.width
-            height: visible ? sysDebugWarnLbl.implicitHeight + Style.space(12) : 0
-            radius: Style.space(7)
-            color: Util.alpha(Commons.Color.urgent, 0.10)
-            border.width: 1
-            border.color: Util.alpha(Commons.Color.urgent, 0.45)
-
-            PlainText {
-              id: sysDebugWarnLbl
-              anchors.centerIn: parent
-              width: parent.width - Style.space(14)
-              text: root.t("sysDebugWarn")
-              color: root.fg
-              font.family: root.face
-              font.pixelSize: Math.max(9, Style.font.caption - 2)
-              wrapMode: Text.WordWrap
-            }
-          }
-
-          // HUD Placement & Hyprland Tiling Mode
-          Column {
-            width: parent.width
-            topPadding: Style.space(4)
-            bottomPadding: Style.space(4)
-            spacing: Style.space(5)
-
-            PlainText {
-              leftPadding: Style.space(8)
-              text: "⊞  " + root.t("hudPos")
-              color: root.fg
-              font.family: root.face
-              font.pixelSize: Style.font.caption
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(4)
-
-              Repeater {
-                model: [
-                  { id: "bottom",     icon: "⬇", key: "posBottom",    tipKey: "tipPosFloat" },
-                  { id: "top",        icon: "⬆", key: "posTop",       tipKey: "tipPosFloat" },
-                  { id: "corner",     icon: "⬊", key: "posCorner",    tipKey: "tipPosFloat" },
-                  { id: "dock-left",  icon: "◧", key: "posTileLeft",  tipKey: "tipPosTile"  },
-                  { id: "dock-right", icon: "◨", key: "posTileRight", tipKey: "tipPosTile"  }
-                ]
-                delegate: Rectangle {
-                  required property var modelData
-                  readonly property bool active: root.hudPlacement === modelData.id
-                  width: (popoutCol.width - Style.space(16)) / 5
-                  height: Style.space(26)
-                  radius: Style.space(6)
-                  color: active ? Util.alpha(Commons.Color.accent, 0.2) : (posMouse.containsMouse ? root.surfaceHover : root.surface)
-                  border.width: 1
-                  border.color: active ? Commons.Color.accent : root.line
-                  Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+                // Per-model CLI vs API badge (clickable when both CLI and API key are available)
+                Rectangle {
+                  anchors.bottom: parent.bottom
+                  anchors.right: parent.right
+                  anchors.bottomMargin: Style.space(4)
+                  anchors.rightMargin: Style.space(5)
+                  width: modAuthLbl.implicitWidth + Style.space(8)
+                  height: Style.space(14)
+                  radius: Style.space(4)
+                  color: effAuth === "api"
+                    ? Util.alpha(Commons.Color.accent, modAuthMouse.containsMouse ? 0.28 : 0.16)
+                    : Util.alpha(root.colSuccess, modAuthMouse.containsMouse ? 0.28 : 0.14)
+                  border.width: canToggleAuth && modAuthMouse.containsMouse ? 1 : 0
+                  border.color: Commons.Color.accent
 
                   PlainText {
+                    id: modAuthLbl
                     anchors.centerIn: parent
-                    text: modelData.icon + " " + root.t(modelData.key)
-                    color: active ? Commons.Color.accent : root.fg
+                    text: effAuth.toUpperCase()
+                    color: effAuth === "api" ? Commons.Color.accent : root.colSuccess
                     font.family: root.face
-                    font.pixelSize: Math.max(9, Style.font.caption - 2)
-                    font.bold: active
+                    font.pixelSize: Math.max(8, Style.font.caption - 2)
+                    font.bold: true
                   }
 
                   MouseArea {
-                    id: posMouse
+                    id: modAuthMouse
+                    enabled: canToggleAuth
                     anchors.fill: parent
+                    anchors.margins: -3
+                    hoverEnabled: true
+                    cursorShape: canToggleAuth ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipAuthToggle"))
+                    onClicked: {
+                      if (root.svc && canToggleAuth) {
+                        root.svc.requestSetModelAuthMode(modelData.id, effAuth === "api" ? "cli" : "api")
+                      }
+                    }
+                  }
+                }
+
+                // Remove button for user-added custom models
+                PlainText {
+                  visible: modelData.custom === true
+                  anchors.top: parent.top
+                  anchors.right: parent.right
+                  anchors.topMargin: Style.space(2)
+                  anchors.rightMargin: Style.space(6)
+                  text: "×"
+                  color: delModMouse.containsMouse ? Commons.Color.urgent : root.dim
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+
+                  MouseArea {
+                    id: delModMouse
+                    anchors.fill: parent
+                    anchors.margins: -4
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t(modelData.tipKey))
-                    onClicked: if (root.svc) root.svc.requestSetHudPlacement(modelData.id)
+                    onClicked: if (root.svc) root.svc.requestRemoveCustomModel(modelData.id)
                   }
                 }
               }
             }
           }
 
+          // Inline form to add extra models for any provider (multiple models per provider!)
           Rectangle {
+            visible: root.addModelOpen
             width: parent.width
-            height: Style.space(32)
+            implicitHeight: addModForm.implicitHeight + Style.space(14)
             radius: Style.space(8)
-            color: locMouse.containsMouse ? root.surfaceHover : "transparent"
+            color: root.surface
+            border.width: 1
+            border.color: root.softLine
 
-            PlainText {
+            Column {
+              id: addModForm
               anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              text: "◎  " + root.t("language")
-              color: root.fg
-              font.family: root.face
-              font.pixelSize: Style.font.caption
-            }
-
-            Rectangle {
               anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              height: Style.space(22)
-              width: locVal.implicitWidth + Style.space(14)
-              radius: Style.space(6)
-              color: root.surface
-              border.width: 1
-              border.color: root.line
+              anchors.top: parent.top
+              anchors.margins: Style.space(8)
+              spacing: Style.space(6)
 
-              PlainText {
-                id: locVal
-                anchors.centerIn: parent
-                text: root.localeDisplayLabel
-                color: Commons.Color.accent
-                font.family: root.face
-                font.pixelSize: Math.max(10, Style.font.caption - 1)
-                font.bold: true
+              Row {
+                width: parent.width
+                spacing: Style.space(4)
+                Repeater {
+                  model: [
+                    { key: "gemini",    label: "Gemini" },
+                    { key: "anthropic", label: "Anthropic" },
+                    { key: "xai",       label: "xAI" },
+                    { key: "openai",    label: "OpenAI" }
+                  ]
+                  delegate: Rectangle {
+                    required property var modelData
+                    readonly property bool picked: root.newModelVendor === modelData.key
+                    width: (addModForm.width - Style.space(12)) / 4
+                    height: Style.space(24)
+                    radius: Style.space(5)
+                    color: picked ? Util.alpha(Commons.Color.accent, 0.22) : root.surface
+                    border.width: 1
+                    border.color: picked ? Commons.Color.accent : root.softLine
+                    PlainText {
+                      anchors.centerIn: parent
+                      text: modelData.label
+                      color: picked ? Commons.Color.accent : root.fg
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      font.bold: picked
+                    }
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        root.newModelVendor = modelData.key
+                        availModelsFlick.contentY = 0
+                        if (root.svc && root.availableModelsForVendor.length === 0)
+                          root.svc.requestRefreshAvailableModels(false)
+                      }
+                    }
+                  }
+                }
               }
-            }
 
-            MouseArea {
-              id: locMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              acceptedButtons: Qt.LeftButton | Qt.RightButton
-              cursorShape: Qt.PointingHandCursor
-              onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipLang"))
-              onClicked: function(mouse) {
-                if (root.svc) root.svc.requestCycleLocale(mouse.button === Qt.RightButton ? -1 : 1)
+              // Active models list for the selected provider (hover for full model details, click to add)
+              Item {
+                width: parent.width
+                height: Style.space(18)
+
+                PlainText {
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.loadingModels && root.availableModelsForVendor.length === 0
+                    ? root.t("loadingModels")
+                    : (root.t("activeModelsHdr") + " (" + root.availableModelsForVendor.length + ")")
+                  color: root.dim
+                  font.family: root.face
+                  font.pixelSize: Math.max(9, Style.font.caption - 1)
+                  font.bold: true
+                }
+
+                Rectangle {
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(20)
+                  height: Style.space(18)
+                  radius: Style.space(4)
+                  color: refModMouse.containsMouse ? root.surfaceHover : "transparent"
+
+                  PlainText {
+                    anchors.centerIn: parent
+                    text: "↻"
+                    color: root.loadingModels || refModMouse.containsMouse ? Commons.Color.accent : root.dim
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  MouseArea {
+                    id: refModMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipRefreshMods"))
+                    onClicked: if (root.svc) root.svc.requestRefreshAvailableModels(true)
+                  }
+                }
+              }
+
+              Rectangle {
+                visible: root.availableModelsForVendor.length > 0
+                width: parent.width
+                height: Math.min(Style.space(164), availModelsCol.implicitHeight + Style.space(8))
+                radius: Style.space(7)
+                color: Util.alpha(Commons.Color.background, 0.40)
+                border.width: 1
+                border.color: root.softLine
+                clip: true
+
+                Flickable {
+                  id: availModelsFlick
+                  anchors.fill: parent
+                  anchors.margins: Style.space(4)
+                  contentWidth: width
+                  contentHeight: availModelsCol.implicitHeight
+                  clip: true
+                  boundsBehavior: Flickable.StopAtBounds
+                  interactive: contentHeight > height + 2
+
+                  Column {
+                    id: availModelsCol
+                    width: availModelsFlick.width - (availModelsFlick.contentHeight > availModelsFlick.height + 2 ? Style.space(6) : 0)
+                    spacing: Style.space(3)
+
+                    Repeater {
+                      model: root.availableModelsForVendor
+                      delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool alreadyAdded: root.isModelAdded(modelData.id)
+                        width: availModelsCol.width
+                        height: Style.space(34)
+                        radius: Style.space(6)
+                        color: availRowMouse.containsMouse
+                          ? Util.alpha(Commons.Color.accent, 0.16)
+                          : (alreadyAdded ? Util.alpha(root.colSuccess, 0.08) : "transparent")
+                        border.width: availRowMouse.containsMouse ? 1 : 0
+                        border.color: Commons.Color.accent
+                        Behavior on color { ColorAnimation { duration: Style.duration(110) } }
+
+                        Column {
+                          anchors.verticalCenter: parent.verticalCenter
+                          anchors.left: parent.left
+                          anchors.right: availActionBadge.left
+                          anchors.leftMargin: Style.space(7)
+                          anchors.rightMargin: Style.space(6)
+                          spacing: 1
+
+                          PlainText {
+                            width: parent.width
+                            text: modelData.label
+                            color: availRowMouse.containsMouse ? Commons.Color.accent : root.fg
+                            font.family: root.face
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                            elide: Text.ElideRight
+                          }
+
+                          PlainText {
+                            width: parent.width
+                            text: (modelData.tier ? (modelData.tier + " · ") : "") + modelData.id
+                            color: root.dim
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 1)
+                            elide: Text.ElideRight
+                          }
+                        }
+
+                        PlainText {
+                          id: availActionBadge
+                          anchors.right: parent.right
+                          anchors.rightMargin: Style.space(7)
+                          anchors.verticalCenter: parent.verticalCenter
+                          text: alreadyAdded ? ("✓ " + root.t("modelAdded")) : "+ Add"
+                          color: alreadyAdded
+                            ? root.colSuccess
+                            : (availRowMouse.containsMouse ? Commons.Color.accent : root.dim)
+                          font.family: root.face
+                          font.pixelSize: Math.max(9, Style.font.caption - 1)
+                          font.bold: alreadyAdded || availRowMouse.containsMouse
+                        }
+
+                        MouseArea {
+                          id: availRowMouse
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: Qt.PointingHandCursor
+                          onContainsMouseChanged: root.setPopoutHover(containsMouse, modelData.details || (modelData.label + " · " + modelData.id))
+                          onClicked: {
+                            if (root.svc) {
+                              root.svc.requestAddCustomModel(root.newModelVendor, modelData.id, modelData.shortLabel || modelData.label)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  Rectangle {
+                    visible: availModelsFlick.contentHeight > availModelsFlick.height + 2
+                    anchors.right: parent.right
+                    y: availModelsFlick.visibleArea.yPosition * availModelsFlick.height
+                    width: Style.space(3)
+                    height: Math.max(Style.space(18), availModelsFlick.visibleArea.heightRatio * availModelsFlick.height)
+                    radius: width / 2
+                    color: Util.alpha(root.fg, 0.35)
+                  }
+                }
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Rectangle {
+                  width: parent.width - addSubmitBtn.width - Style.space(6)
+                  height: Style.space(28)
+                  radius: Style.space(6)
+                  color: Util.alpha(Commons.Color.background, 0.55)
+                  border.width: 1
+                  border.color: newModIdInput.activeFocus ? Commons.Color.accent : root.softLine
+
+                  TextInput {
+                    id: newModIdInput
+                    anchors.fill: parent
+                    anchors.leftMargin: Style.space(8)
+                    anchors.rightMargin: Style.space(8)
+                    verticalAlignment: TextInput.AlignVCenter
+                    color: root.fg
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    clip: true
+                    selectByMouse: true
+                    onTextEdited: {
+                      var low = text.trim().toLowerCase()
+                      if (low.indexOf("gemini") === 0) root.newModelVendor = "gemini"
+                      else if (low.indexOf("claude") === 0) root.newModelVendor = "anthropic"
+                      else if (low.indexOf("grok") === 0) root.newModelVendor = "xai"
+                      else if (low.indexOf("gpt") === 0 || low.indexOf("o1") === 0 || low.indexOf("o3") === 0 || low.indexOf("o4") === 0) root.newModelVendor = "openai"
+                    }
+                    PlainText {
+                      anchors.fill: parent
+                      verticalAlignment: Text.AlignVCenter
+                      visible: newModIdInput.text === ""
+                      text: "Model ID (e.g. claude-opus-4-6, gpt-4.1…)"
+                      color: root.dim
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                    Keys.onReturnPressed: {
+                      if (root.svc && newModIdInput.text.trim() !== "") {
+                        root.svc.requestAddCustomModel(root.newModelVendor, newModIdInput.text.trim(), newModLblInput.text.trim())
+                        newModIdInput.text = ""
+                        newModLblInput.text = ""
+                        root.addModelOpen = false
+                      }
+                    }
+                  }
+                }
+
+                Rectangle {
+                  id: addSubmitBtn
+                  width: Style.space(48)
+                  height: Style.space(28)
+                  radius: Style.space(6)
+                  color: Commons.Color.accent
+                  PlainText {
+                    anchors.centerIn: parent
+                    text: "+ Add"
+                    color: Commons.Color.background
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      if (root.svc && newModIdInput.text.trim() !== "") {
+                        root.svc.requestAddCustomModel(root.newModelVendor, newModIdInput.text.trim(), newModLblInput.text.trim())
+                        newModIdInput.text = ""
+                        newModLblInput.text = ""
+                        root.addModelOpen = false
+                      }
+                    }
+                  }
+                }
+              }
+
+              Rectangle {
+                width: parent.width
+                height: Style.space(26)
+                radius: Style.space(6)
+                color: Util.alpha(Commons.Color.background, 0.45)
+                border.width: 1
+                border.color: newModLblInput.activeFocus ? Commons.Color.accent : root.softLine
+
+                TextInput {
+                  id: newModLblInput
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(8)
+                  anchors.rightMargin: Style.space(8)
+                  verticalAlignment: TextInput.AlignVCenter
+                  color: root.fg
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                  clip: true
+                  selectByMouse: true
+                  PlainText {
+                    anchors.fill: parent
+                    verticalAlignment: Text.AlignVCenter
+                    visible: newModLblInput.text === ""
+                    text: "Short label (optional, e.g. Opus 4.6)"
+                    color: root.dim
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                  Keys.onReturnPressed: {
+                    if (root.svc && newModIdInput.text.trim() !== "") {
+                      root.svc.requestAddCustomModel(root.newModelVendor, newModIdInput.text.trim(), newModLblInput.text.trim())
+                      newModIdInput.text = ""
+                      newModLblInput.text = ""
+                      root.addModelOpen = false
+                    }
+                  }
+                }
               }
             }
           }
         }
 
-        Rectangle { width: parent.width; height: 1; color: root.line; opacity: 0.45 }
+        // 4. CAPTURE BEHAVIOR (Unified Auto-Analyze ON vs Manual Prompt)
+        Rectangle {
+          width: parent.width
+          height: Style.space(32)
+          radius: Style.space(8)
+          color: root.surface
+          border.width: 1
+          border.color: root.softLine
+
+          Row {
+            anchors.fill: parent
+            anchors.margins: Style.space(3)
+            spacing: Style.space(3)
+
+            Rectangle {
+              width: (parent.width - Style.space(3)) / 2
+              height: parent.height
+              radius: Style.space(6)
+              color: root.autosend ? Util.alpha(Commons.Color.accent, 0.22) : (quickModeMouse.containsMouse ? root.surfaceHover : "transparent")
+              border.width: root.autosend ? 1 : 0
+              border.color: Commons.Color.accent
+              Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+
+              PlainText {
+                anchors.centerIn: parent
+                text: root.t("modeQuick")
+                color: root.autosend ? Commons.Color.accent : root.dim
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+                font.bold: root.autosend
+              }
+
+              MouseArea {
+                id: quickModeMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipModeQuick"))
+                onClicked: if (root.svc) root.svc.requestSetAutosend(true)
+              }
+            }
+
+            Rectangle {
+              width: (parent.width - Style.space(3)) / 2
+              height: parent.height
+              radius: Style.space(6)
+              color: !root.autosend ? Util.alpha(Commons.Color.accent, 0.22) : (hudModeMouse.containsMouse ? root.surfaceHover : "transparent")
+              border.width: !root.autosend ? 1 : 0
+              border.color: Commons.Color.accent
+              Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+
+              PlainText {
+                anchors.centerIn: parent
+                text: root.t("modeHud")
+                color: !root.autosend ? Commons.Color.accent : root.dim
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+                font.bold: !root.autosend
+              }
+
+              MouseArea {
+                id: hudModeMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipModeHud"))
+                onClicked: if (root.svc) root.svc.requestSetAutosend(false)
+              }
+            }
+          }
+        }
+        }
+
+        // PAGE 2: OPTIONS (Behavior settings, HUD placement, Providers & API keys, Pinned prompts)
+        Column {
+          id: optionsPageCol
+          visible: root.optionsPage
+          width: popoutScroll.width - (popoutScroll.contentHeight > popoutScroll.height + 2 ? Style.space(8) : 0)
+          spacing: Style.space(10)
+
+          // Grouped soft settings container
+          Rectangle {
+            width: parent.width
+            implicitHeight: settingsGroupCol.implicitHeight + Style.space(8)
+            radius: Style.space(9)
+            color: root.surface
+            border.width: 1
+            border.color: root.softLine
+
+            Column {
+              id: settingsGroupCol
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.margins: Style.space(4)
+              spacing: Style.space(2)
+
+              ToggleRow {
+                title: root.t("minSend")
+                subtitle: root.t("minSendSub")
+                tip: root.t("tipMinSend")
+                checked: root.minimizeOnSend
+                onToggled: if (root.svc) root.svc.requestSetMinimizeOnSend(!root.minimizeOnSend)
+              }
+
+              ToggleRow {
+                title: root.t("autoDelegate")
+                subtitle: root.t("autoDelegateSub")
+                tip: root.t("tipAutoDelegate")
+                checked: root.autoDelegate
+                onToggled: if (root.svc) root.svc.requestSetAutoDelegate(!root.autoDelegate)
+              }
+
+              ToggleRow {
+                title: root.t("agentMem")
+                subtitle: root.t("agentMemSub")
+                tip: root.t("tipAgentMem")
+                checked: root.agentMemory
+                onToggled: if (root.svc) root.svc.requestSetAgentMemory(!root.agentMemory)
+              }
+
+              ToggleRow {
+                visible: !root.systemDebug
+                title: root.t("reason")
+                tip: root.t("tipReason")
+                checked: root.showReason
+                onToggled: if (root.svc) root.svc.requestSetShowReason(!root.showReason)
+              }
+
+              ToggleRow {
+                title: root.t("sysDebug")
+                subtitle: root.t("sysDebugSub")
+                tip: root.t("tipSysDebug")
+                warnTone: true
+                checked: root.systemDebug
+                onToggled: if (root.svc) root.svc.requestSetSystemDebug(!root.systemDebug)
+              }
+
+              Rectangle {
+                visible: root.systemDebug
+                width: parent.width - Style.space(8)
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: visible ? sysDebugWarnLbl.implicitHeight + Style.space(10) : 0
+                radius: Style.space(6)
+                color: Util.alpha(Commons.Color.urgent, 0.10)
+                border.width: 1
+                border.color: Util.alpha(Commons.Color.urgent, 0.38)
+
+                PlainText {
+                  id: sysDebugWarnLbl
+                  anchors.centerIn: parent
+                  width: parent.width - Style.space(12)
+                  text: root.t("sysDebugWarn")
+                  color: root.fg
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+              }
+
+              // HUD Placement & Hyprland Tiling Mode
+              Column {
+                width: parent.width
+                topPadding: Style.space(4)
+                bottomPadding: Style.space(4)
+                leftPadding: Style.space(4)
+                rightPadding: Style.space(4)
+                spacing: Style.space(5)
+
+                PlainText {
+                  leftPadding: Style.space(4)
+                  text: "⊞  " + root.t("hudPos")
+                  color: root.dim
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                }
+
+                Row {
+                  width: parent.width - Style.space(8)
+                  spacing: Style.space(4)
+
+                  Repeater {
+                    model: [
+                      { id: "bottom",     icon: "⬇", key: "posBottom",    tipKey: "tipPosFloat" },
+                      { id: "top",        icon: "⬆", key: "posTop",       tipKey: "tipPosFloat" },
+                      { id: "corner",     icon: "⬊", key: "posCorner",    tipKey: "tipPosFloat" },
+                      { id: "dock-left",  icon: "◧", key: "posTileLeft",  tipKey: "tipPosTile"  },
+                      { id: "dock-right", icon: "◨", key: "posTileRight", tipKey: "tipPosTile"  }
+                    ]
+                    delegate: Rectangle {
+                      required property var modelData
+                      readonly property bool active: root.hudPlacement === modelData.id
+                      width: (parent.width - Style.space(16)) / 5
+                      height: Style.space(24)
+                      radius: Style.space(6)
+                      color: active ? Util.alpha(Commons.Color.accent, 0.2) : (posMouse.containsMouse ? root.surfaceHover : "transparent")
+                      border.width: 1
+                      border.color: active ? Commons.Color.accent : root.softLine
+                      Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+
+                      PlainText {
+                        anchors.centerIn: parent
+                        text: modelData.icon + " " + root.t(modelData.key)
+                        color: active ? Commons.Color.accent : root.dim
+                        font.family: root.face
+                        font.pixelSize: Style.font.caption
+                        font.bold: active
+                      }
+
+                      MouseArea {
+                        id: posMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t(modelData.tipKey))
+                        onClicked: if (root.svc) root.svc.requestSetHudPlacement(modelData.id)
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+        // 4B. AI CONTEXT & MARKDOWN (.md) INSTRUCTIONS (seen by all AI providers)
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Rectangle {
+            width: parent.width
+            height: Style.space(28)
+            radius: Style.space(7)
+            color: ctxHdrMouse.containsMouse ? root.surfaceHover : "transparent"
+
+            PlainText {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              text: (root.contextExpanded ? "▾  " : "▸  ") + "✎ " + root.t("contextSec")
+              color: root.fg
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            PlainText {
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.hasNoteContext && root.hasFileContext
+                ? (root.t("contextNoteTag") + " + .md")
+                : (root.hasFileContext ? ".md" : (root.hasNoteContext ? root.t("contextNoteTag") : root.t("contextOff")))
+              color: root.hasAnyContext ? root.colSuccess : root.dim
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: root.hasAnyContext
+            }
+
+            MouseArea {
+              id: ctxHdrMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipContextSec"))
+              onClicked: root.contextExpanded = !root.contextExpanded
+            }
+          }
+
+          Rectangle {
+            visible: root.contextExpanded
+            width: parent.width
+            implicitHeight: ctxBodyCol.implicitHeight + Style.space(16)
+            radius: Style.space(9)
+            color: root.surface
+            border.width: 1
+            border.color: root.softLine
+
+            Column {
+              id: ctxBodyCol
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.margins: Style.space(8)
+              spacing: Style.space(8)
+
+              // A. Freeform comment / custom instructions
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+
+                Item {
+                  width: parent.width
+                  height: Style.space(18)
+
+                  PlainText {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.t("contextNoteLbl")
+                    color: root.dim
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  Row {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(4)
+
+                    readonly property bool noteDirty: ctxNoteEdit.text.replace(/^\s+|\s+$/g, "") !== root.customContext.replace(/^\s+|\s+$/g, "")
+
+                    Rectangle {
+                      visible: root.hasNoteContext || ctxNoteEdit.text.length > 0
+                      width: ctxClrLbl.implicitWidth + Style.space(10)
+                      height: Style.space(18)
+                      radius: Style.space(4)
+                      color: ctxClrMouse.containsMouse ? Util.alpha(Commons.Color.urgent, 0.20) : "transparent"
+                      border.width: 1
+                      border.color: ctxClrMouse.containsMouse ? Commons.Color.urgent : root.softLine
+
+                      PlainText {
+                        id: ctxClrLbl
+                        anchors.centerIn: parent
+                        text: root.t("clearKey")
+                        color: ctxClrMouse.containsMouse ? Commons.Color.urgent : root.dim
+                        font.family: root.face
+                        font.pixelSize: Math.max(9, Style.font.caption - 1)
+                      }
+
+                      MouseArea {
+                        id: ctxClrMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                          ctxNoteEdit.text = ""
+                          if (root.svc) root.svc.requestSetCustomContext("")
+                        }
+                      }
+                    }
+
+                    Rectangle {
+                      visible: parent.noteDirty
+                      width: ctxSaveLbl.implicitWidth + Style.space(12)
+                      height: Style.space(18)
+                      radius: Style.space(4)
+                      color: Commons.Color.accent
+
+                      PlainText {
+                        id: ctxSaveLbl
+                        anchors.centerIn: parent
+                        text: root.t("saveKey")
+                        color: Commons.Color.background
+                        font.family: root.face
+                        font.pixelSize: Math.max(9, Style.font.caption - 1)
+                        font.bold: true
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                          if (root.svc) root.svc.requestSetCustomContext(ctxNoteEdit.text)
+                        }
+                      }
+                    }
+                  }
+                }
+
+                Rectangle {
+                  width: parent.width
+                  height: Style.space(66)
+                  radius: Style.space(7)
+                  color: ctxNoteEdit.activeFocus ? Util.alpha(root.fg, 0.08) : Util.alpha(Commons.Color.background, 0.45)
+                  border.width: 1
+                  border.color: ctxNoteEdit.activeFocus ? Commons.Color.accent : root.softLine
+                  clip: true
+
+                  PlainText {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Style.space(7)
+                    visible: ctxNoteEdit.text.length === 0
+                    text: root.t("contextNoteHint")
+                    color: root.dim
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    wrapMode: Text.WordWrap
+                  }
+
+                  Flickable {
+                    id: ctxNoteFlick
+                    anchors.fill: parent
+                    anchors.margins: Style.space(6)
+                    contentWidth: width
+                    contentHeight: Math.max(height, ctxNoteEdit.paintedHeight + Style.space(4))
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    TextEdit {
+                      id: ctxNoteEdit
+                      width: ctxNoteFlick.width
+                      height: Math.max(ctxNoteFlick.height, paintedHeight)
+                      textFormat: TextEdit.PlainText
+                      wrapMode: TextEdit.Wrap
+                      color: root.fg
+                      selectionColor: Util.alpha(Commons.Color.accent, 0.35)
+                      selectedTextColor: root.fg
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      selectByMouse: true
+                      Component.onCompleted: text = root.customContext
+                      onActiveFocusChanged: {
+                        if (!activeFocus && root.svc && text.replace(/^\s+|\s+$/g, "") !== root.customContext.replace(/^\s+|\s+$/g, ""))
+                          root.svc.requestSetCustomContext(text)
+                      }
+                      Connections {
+                        target: root
+                        function onCustomContextChanged() {
+                          if (!ctxNoteEdit.activeFocus && ctxNoteEdit.text !== root.customContext)
+                            ctxNoteEdit.text = root.customContext
+                        }
+                      }
+                      Keys.onPressed: function(event) {
+                        if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                          if (root.svc) root.svc.requestSetCustomContext(ctxNoteEdit.text)
+                          event.accepted = true
+                        }
+                      }
+                      Keys.onEscapePressed: popoutKeys.forceActiveFocus()
+                    }
+                  }
+                }
+              }
+
+              // B. Optional Markdown (.md) file path + Browse / Edit / Clear
+              Column {
+                width: parent.width
+                spacing: Style.space(5)
+
+                PlainText {
+                  text: root.t("contextFileLbl")
+                  color: root.dim
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Row {
+                  width: parent.width
+                  spacing: Style.space(5)
+
+                  readonly property bool fileDirty: ctxFileInput.text.replace(/^\s+|\s+$/g, "") !== root.contextFile.replace(/^\s+|\s+$/g, "")
+
+                  Rectangle {
+                    width: parent.width - (ctxFileSaveBtn.visible ? ctxFileSaveBtn.width + Style.space(5) : 0)
+                    height: Style.space(28)
+                    radius: Style.space(6)
+                    color: ctxFileInput.activeFocus ? Util.alpha(root.fg, 0.08) : Util.alpha(Commons.Color.background, 0.45)
+                    border.width: 1
+                    border.color: ctxFileInput.activeFocus ? Commons.Color.accent : root.softLine
+
+                    PlainText {
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.leftMargin: Style.space(8)
+                      anchors.rightMargin: Style.space(8)
+                      anchors.verticalCenter: parent.verticalCenter
+                      visible: ctxFileInput.text.length === 0
+                      text: root.t("contextFileHint")
+                      color: root.dim
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+
+                    TextInput {
+                      id: ctxFileInput
+                      anchors.fill: parent
+                      anchors.leftMargin: Style.space(8)
+                      anchors.rightMargin: Style.space(8)
+                      verticalAlignment: TextInput.AlignVCenter
+                      color: root.fg
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      clip: true
+                      selectByMouse: true
+                      Component.onCompleted: text = root.contextFile
+                      onActiveFocusChanged: {
+                        if (!activeFocus && root.svc && text.replace(/^\s+|\s+$/g, "") !== root.contextFile.replace(/^\s+|\s+$/g, ""))
+                          root.svc.requestSetContextFile(text)
+                      }
+                      Connections {
+                        target: root
+                        function onContextFileChanged() {
+                          if (!ctxFileInput.activeFocus && ctxFileInput.text !== root.contextFile)
+                            ctxFileInput.text = root.contextFile
+                        }
+                      }
+                      onAccepted: {
+                        if (root.svc) root.svc.requestSetContextFile(text)
+                      }
+                      Keys.onEscapePressed: popoutKeys.forceActiveFocus()
+                    }
+                  }
+
+                  Rectangle {
+                    id: ctxFileSaveBtn
+                    visible: parent.fileDirty
+                    width: ctxFileSaveLbl.implicitWidth + Style.space(14)
+                    height: Style.space(28)
+                    radius: Style.space(6)
+                    color: Commons.Color.accent
+
+                    PlainText {
+                      id: ctxFileSaveLbl
+                      anchors.centerIn: parent
+                      text: root.t("saveKey")
+                      color: Commons.Color.background
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        if (root.svc) root.svc.requestSetContextFile(ctxFileInput.text)
+                      }
+                    }
+                  }
+                }
+
+                Row {
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Rectangle {
+                    height: Style.space(24)
+                    width: ctxBrowseLbl.implicitWidth + Style.space(16)
+                    radius: Style.space(6)
+                    color: ctxBrowseMouse.containsMouse ? root.surfaceHover : Util.alpha(Commons.Color.background, 0.35)
+                    border.width: 1
+                    border.color: ctxBrowseMouse.containsMouse ? Commons.Color.accent : root.softLine
+
+                    PlainText {
+                      id: ctxBrowseLbl
+                      anchors.centerIn: parent
+                      text: "📂 " + root.t("contextBrowse")
+                      color: ctxBrowseMouse.containsMouse ? Commons.Color.accent : root.fg
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    MouseArea {
+                      id: ctxBrowseMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipContextBrowse"))
+                      onClicked: {
+                        root.close()
+                        if (root.svc) root.svc.requestPickContextFile()
+                      }
+                    }
+                  }
+
+                  Rectangle {
+                    height: Style.space(24)
+                    width: ctxEditLbl.implicitWidth + Style.space(16)
+                    radius: Style.space(6)
+                    color: ctxEditMouse.containsMouse ? Util.alpha(Commons.Color.accent, 0.20) : Util.alpha(Commons.Color.background, 0.35)
+                    border.width: 1
+                    border.color: ctxEditMouse.containsMouse ? Commons.Color.accent : root.softLine
+
+                    PlainText {
+                      id: ctxEditLbl
+                      anchors.centerIn: parent
+                      text: "✎ " + (root.hasFileContext || ctxFileInput.text.trim().length > 0 ? root.t("contextEdit") : root.t("contextNewMd"))
+                      color: ctxEditMouse.containsMouse ? Commons.Color.accent : root.fg
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    MouseArea {
+                      id: ctxEditMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipContextEdit"))
+                      onClicked: {
+                        var targetPath = ctxFileInput.text.replace(/^\s+|\s+$/g, "")
+                        root.close()
+                        if (root.svc) root.svc.requestEditContextFile(targetPath)
+                      }
+                    }
+                  }
+
+                  Rectangle {
+                    visible: root.hasFileContext || ctxFileInput.text.length > 0
+                    height: Style.space(24)
+                    width: ctxFileClrLbl.implicitWidth + Style.space(14)
+                    radius: Style.space(6)
+                    color: ctxFileClrMouse.containsMouse ? Util.alpha(Commons.Color.urgent, 0.20) : "transparent"
+                    border.width: 1
+                    border.color: ctxFileClrMouse.containsMouse ? Commons.Color.urgent : root.softLine
+
+                    PlainText {
+                      id: ctxFileClrLbl
+                      anchors.centerIn: parent
+                      text: root.t("clearKey")
+                      color: ctxFileClrMouse.containsMouse ? Commons.Color.urgent : root.dim
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    MouseArea {
+                      id: ctxFileClrMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        ctxFileInput.text = ""
+                        if (root.svc) root.svc.requestSetContextFile("")
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
 
         // 5. PROVIDERS & MANUAL API KEYS (Omarchy Agent Auth + Manual Fallback)
         Column {
@@ -1045,7 +2034,7 @@ BarWidget {
               text: root.readyProviderCount + "/" + Math.max(4, root.providerStatuses.length)
               color: root.readyProviderCount > 0 ? root.colSuccess : Commons.Color.urgent
               font.family: root.face
-              font.pixelSize: Math.max(10, Style.font.caption - 1)
+              font.pixelSize: Style.font.caption
               font.bold: true
             }
 
@@ -1072,7 +2061,7 @@ BarWidget {
               text: root.t("apiHint")
               color: root.dim
               font.family: root.face
-              font.pixelSize: Math.max(10, Style.font.caption - 1)
+              font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
 
@@ -1081,16 +2070,16 @@ BarWidget {
               delegate: Column {
                 required property var modelData
                 readonly property bool isEditing: root.editingVendor === modelData.vendor
-                width: popoutCol.width
+                width: optionsPageCol.width
                 spacing: Style.space(4)
 
                 Rectangle {
                   width: parent.width
-                  height: Style.space(30)
+                  height: Style.space(32)
                   radius: Style.space(7)
                   color: isEditing ? Util.alpha(Commons.Color.accent, 0.14) : (pRowMouse.containsMouse ? root.surfaceHover : root.surface)
                   border.width: 1
-                  border.color: isEditing ? Commons.Color.accent : root.line
+                  border.color: isEditing ? Commons.Color.accent : root.softLine
 
                   PlainText {
                     anchors.left: parent.left
@@ -1103,25 +2092,118 @@ BarWidget {
                     font.bold: true
                   }
 
-                  PlainText {
-                    anchors.right: parent.right
-                    anchors.rightMargin: Style.space(8)
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: modelData.ready ? ("✓ " + modelData.detail) : ("⚠ " + root.t("setKey"))
-                    color: modelData.ready ? root.colSuccess : Commons.Color.urgent
-                    font.family: root.face
-                    font.pixelSize: Math.max(10, Style.font.caption - 1)
-                  }
-
                   MouseArea {
                     id: pRowMouse
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.right: provRightRow.left
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipProviderRow") + " (" + modelData.envName + ")")
                     onClicked: {
                       root.editingVendor = isEditing ? "" : modelData.vendor
                       if (root.editingVendor !== "") Qt.callLater(function() { keyField.forceActiveFocus() })
+                    }
+                  }
+
+                  Row {
+                    id: provRightRow
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(6)
+
+                    // 1-Click CLI vs API segmented switch when CLI is installed
+                    Rectangle {
+                      visible: modelData.hasCli === true
+                      width: Style.space(70)
+                      height: Style.space(22)
+                      anchors.verticalCenter: parent.verticalCenter
+                      radius: Style.space(5)
+                      color: Util.alpha(Commons.Color.background, 0.55)
+                      border.width: 1
+                      border.color: root.softLine
+
+                      Row {
+                        anchors.fill: parent
+                        anchors.margins: 2
+                        spacing: 2
+
+                        Rectangle {
+                          width: (parent.width - 2) / 2
+                          height: parent.height
+                          radius: Style.space(4)
+                          color: modelData.authMode !== "api" ? Util.alpha(root.colSuccess, 0.25) : "transparent"
+
+                          PlainText {
+                            anchors.centerIn: parent
+                            text: "CLI"
+                            color: modelData.authMode !== "api" ? root.colSuccess : root.dim
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 1)
+                            font.bold: modelData.authMode !== "api"
+                          }
+
+                          MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipAuthToggle"))
+                            onClicked: {
+                              if (root.svc) root.svc.requestSetProviderAuthMode(modelData.vendor, "cli")
+                            }
+                          }
+                        }
+
+                        Rectangle {
+                          width: (parent.width - 2) / 2
+                          height: parent.height
+                          radius: Style.space(4)
+                          color: modelData.authMode === "api" ? Util.alpha(Commons.Color.accent, 0.25) : "transparent"
+
+                          PlainText {
+                            anchors.centerIn: parent
+                            text: "API"
+                            color: modelData.authMode === "api" ? Commons.Color.accent : root.dim
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 1)
+                            font.bold: modelData.authMode === "api"
+                          }
+
+                          MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipAuthToggle"))
+                            onClicked: {
+                              if (modelData.hasApi === true) {
+                                if (root.svc) root.svc.requestSetProviderAuthMode(modelData.vendor, "api")
+                              } else {
+                                root.editingVendor = modelData.vendor
+                                Qt.callLater(function() { keyField.forceActiveFocus() })
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    PlainText {
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.ready ? ("✓ " + modelData.detail) : ("⚠ " + root.t("setKey"))
+                      color: modelData.ready ? root.colSuccess : Commons.Color.urgent
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                          root.editingVendor = isEditing ? "" : modelData.vendor
+                          if (root.editingVendor !== "") Qt.callLater(function() { keyField.forceActiveFocus() })
+                        }
+                      }
                     }
                   }
                 }
@@ -1188,7 +2270,7 @@ BarWidget {
                       text: root.t("saveKey")
                       color: Commons.Color.background
                       font.family: root.face
-                      font.pixelSize: Math.max(10, Style.font.caption - 1)
+                      font.pixelSize: Style.font.caption
                       font.bold: true
                     }
 
@@ -1216,7 +2298,7 @@ BarWidget {
                       text: root.t("clearKey")
                       color: clearKeyMouse.containsMouse ? Commons.Color.urgent : root.fg
                       font.family: root.face
-                      font.pixelSize: Math.max(10, Style.font.caption - 1)
+                      font.pixelSize: Style.font.caption
                     }
 
                     MouseArea {
@@ -1237,77 +2319,110 @@ BarWidget {
           }
         }
 
-        Rectangle { width: parent.width; height: 1; color: root.line; opacity: 0.45 }
-
-        // 6. PINNED PROMPTS MANAGER
+        // 6. PINNED PROMPTS MANAGER (clean collapsible accordion matching Providers)
         Column {
           width: parent.width
           spacing: Style.space(6)
 
-          PlainText {
-            text: "★  " + root.t("pinnedSec")
-            color: root.dim
-            font.family: root.face
-            font.pixelSize: Math.max(10, Style.font.caption - 1)
-            font.bold: true
+          Rectangle {
+            width: parent.width
+            height: Style.space(28)
+            radius: Style.space(7)
+            color: pinHdrMouse.containsMouse ? root.surfaceHover : "transparent"
+
+            PlainText {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              text: (root.promptsExpanded ? "▾  " : "▸  ") + "★ " + root.t("pinnedSec")
+              color: root.fg
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            PlainText {
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: String(root.customPrompts.length)
+              color: root.dim
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            MouseArea {
+              id: pinHdrMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipPinAdd"))
+              onClicked: root.promptsExpanded = !root.promptsExpanded
+            }
           }
 
-          Flow {
+          Column {
+            visible: root.promptsExpanded
             width: parent.width
-            spacing: Style.space(5)
-            visible: root.customPrompts.length > 0
+            spacing: Style.space(6)
 
-            Repeater {
-              model: root.customPrompts
-              delegate: Rectangle {
-                required property string modelData
-                width: Math.min(popoutCol.width, pRow.implicitWidth + Style.space(14))
-                height: Style.space(24)
-                radius: height / 2
-                color: root.surface
-                border.width: 1
-                border.color: root.line
+            Flow {
+              width: parent.width
+              spacing: Style.space(5)
+              visible: root.customPrompts.length > 0
 
-                Row {
-                  id: pRow
-                  anchors.centerIn: parent
-                  spacing: Style.space(5)
-                  PlainText {
-                    text: modelData
-                    color: root.fg
-                    font.family: root.face
-                    font.pixelSize: Math.max(10, Style.font.caption - 1)
-                    elide: Text.ElideRight
-                    width: Math.min(implicitWidth, popoutCol.width - Style.space(34))
-                  }
-                  PlainText {
-                    text: "×"
-                    color: pDelMouse.containsMouse ? Commons.Color.urgent : root.dim
-                    font.family: root.face
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                    MouseArea {
-                      id: pDelMouse
-                      anchors.fill: parent
-                      anchors.margins: -4
-                      hoverEnabled: true
-                      cursorShape: Qt.PointingHandCursor
-                      onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipPinDel"))
-                      onClicked: if (root.svc) root.svc.requestRemoveCustomPrompt(modelData)
+              Repeater {
+                model: root.customPrompts
+                delegate: Rectangle {
+                  required property string modelData
+                  width: Math.min(optionsPageCol.width, pRow.implicitWidth + Style.space(14))
+                  height: Style.space(24)
+                  radius: height / 2
+                  color: root.surface
+                  border.width: 1
+                  border.color: root.softLine
+
+                  Row {
+                    id: pRow
+                    anchors.centerIn: parent
+                    spacing: Style.space(5)
+                    PlainText {
+                      text: modelData
+                      color: root.fg
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      width: Math.min(implicitWidth, optionsPageCol.width - Style.space(34))
+                    }
+                    PlainText {
+                      text: "×"
+                      color: pDelMouse.containsMouse ? Commons.Color.urgent : root.dim
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      MouseArea {
+                        id: pDelMouse
+                        anchors.fill: parent
+                        anchors.margins: -4
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onContainsMouseChanged: root.setPopoutHover(containsMouse, root.t("tipPinDel"))
+                        onClicked: if (root.svc) root.svc.requestRemoveCustomPrompt(modelData)
+                      }
                     }
                   }
                 }
               }
             }
-          }
 
-          Rectangle {
-            width: parent.width
-            height: Style.space(30)
-            radius: Style.space(7)
-            color: addPromptInput.activeFocus ? Util.alpha(root.fg, 0.08) : root.surface
-            border.width: 1
-            border.color: addPromptInput.activeFocus ? Commons.Color.accent : root.line
+            Rectangle {
+              width: parent.width
+              height: Style.space(30)
+              radius: Style.space(7)
+              color: addPromptInput.activeFocus ? Util.alpha(root.fg, 0.08) : root.surface
+              border.width: 1
+              border.color: addPromptInput.activeFocus ? Commons.Color.accent : root.softLine
 
             PlainText {
               anchors.left: parent.left
@@ -1373,6 +2488,7 @@ BarWidget {
               }
             }
           }
+          }
         }
         }
 
@@ -1384,31 +2500,29 @@ BarWidget {
           width: Style.space(3)
           height: Math.max(Style.space(22), popoutScroll.visibleArea.heightRatio * popoutScroll.height)
           radius: width / 2
-          color: Util.alpha(Commons.Color.accent, 0.45)
+          color: Util.alpha(root.fg, 0.38)
         }
       }
 
-      // 7. PINNED BOTTOM LIVE HOVER HINT FOOTER (never clipped regardless of popout height)
-      Rectangle {
+      // 7. CLEAN BORDERLESS LIVE HOVER HINT FOOTER
+      Item {
         id: hoverFooter
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: Math.max(Style.space(28), hintLbl.implicitHeight + Style.space(12))
-        radius: Style.space(7)
-        color: root.hoverTip !== "" ? Util.alpha(Commons.Color.accent, 0.12) : root.surface
-        border.width: 1
-        border.color: root.hoverTip !== "" ? Util.alpha(Commons.Color.accent, 0.45) : "transparent"
-        Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+        height: Math.max(Style.space(18), hintLbl.implicitHeight + Style.space(4))
 
         PlainText {
           id: hintLbl
-          anchors.centerIn: parent
-          width: parent.width - Style.space(14)
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          leftPadding: Style.space(4)
+          rightPadding: Style.space(4)
           text: root.hoverTip !== "" ? ("ⓘ " + root.hoverTip) : root.t("hoverDefault")
-          color: root.hoverTip !== "" ? root.fg : root.dim
+          color: root.hoverTip !== "" ? root.fg : Util.alpha(root.dim, 0.72)
           font.family: root.face
-          font.pixelSize: Math.max(10, Style.font.caption - 1)
+          font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
           Behavior on color { ColorAnimation { duration: Style.duration(120) } }
         }

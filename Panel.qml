@@ -29,6 +29,11 @@ Item {
   property bool minimalMode: false
   property string hudPlacement: "bottom" // bottom | top | corner | dock-right | dock-left
   readonly property bool isDocked: hudPlacement === "dock-right" || hudPlacement === "dock-left"
+  property bool fullscreen: false
+  readonly property bool effectiveDocked: isDocked && !fullscreen
+  property real imageZoom: 1.0
+  property real customPreviewHeight: -1
+  property bool modelPickerOpen: false
   property bool remapping: false
   property bool focusPrimed: false
   property bool dragging: false
@@ -36,9 +41,18 @@ Item {
   property real customX: 0
   property real customY: 0
   property var customPrompts: []
+  property var customModels: []
+  property var availableModels: ({})
+  property bool loadingModels: false
   property var aiPrompts: []
   property int recommendedModelIdx: -1
   property string recommendedCategory: ""
+  property bool stealthPopupOpen: false
+  property string stealthPopupAnswer: ""
+  property bool stealthPopupError: false
+  property bool capturingInChat: false
+  property string lastInChatShotPath: ""
+  property bool pendingNewShot: false
 
   property var pendingAsk: null
   property bool askStop: false
@@ -62,6 +76,25 @@ Item {
   property real tooltipY: 0
   property bool showReason: false
   property bool systemDebug: false
+  property bool agentMemory: false
+  property bool autoDelegate: true
+  property string sysLang: ""
+  property bool compactChatMode: false
+  property bool historyDrawerOpen: false
+  property string currentSessionId: ""
+  property string detectedCategory: ""
+  property string handoffFromLabel: ""
+  property string activeTurnModelLabel: ""
+  property var chatHistory: []
+  property var sessionHistory: []
+  property string customContext: ""
+  property string contextFile: ""
+  property var providerAuthMode: ({})
+  property var modelAuthMode: ({})
+  property var selectedTurns: []
+  property int copiedTurnIdx: -1
+  property bool copiedChatFeedback: false
+  property bool pendingSendAfterCrop: false
   property string lastSaveDir: "~/Documents"
   property bool saveDrawerOpen: false
   property string savePathText: ""
@@ -75,7 +108,34 @@ Item {
   property var answerBlocks: []
   property int copiedBlockIdx: -1
   property real answerFade: 1
-  onAnswerChanged: answerBlocks = parseMarkdownBlocks(answer)
+  onAnswerChanged: {
+    if (answer === "") {
+      streamParseTimer.stop()
+      answerBlocks = []
+    } else if (!windowOpen) {
+      // Defer markdown layout until HUD window is actually visible
+    } else if (inflight !== "") {
+      if (!streamParseTimer.running) streamParseTimer.start()
+    } else {
+      streamParseTimer.stop()
+      answerBlocks = parseMarkdownBlocks(answer)
+    }
+  }
+  onWindowOpenChanged: {
+    if (windowOpen && answer !== "") {
+      streamParseTimer.stop()
+      answerBlocks = parseMarkdownBlocks(answer)
+    }
+  }
+  Timer {
+    id: streamParseTimer
+    interval: 34
+    repeat: false
+    onTriggered: {
+      if (root.windowOpen && root.answer !== "")
+        root.answerBlocks = root.parseMarkdownBlocks(root.answer)
+    }
+  }
   property string omarchyAgent: "grok"
   property string visionWhy: ""
   property bool paused: false
@@ -88,6 +148,16 @@ Item {
   property bool hasUnreadAnswer: false
   property var providerStatuses: []
 
+  function mixOn(back, front, t) {
+    if (!back || !front) return front || fg
+    return Qt.rgba(
+      front.r * t + back.r * (1 - t),
+      front.g * t + back.g * (1 - t),
+      front.b * t + back.b * (1 - t),
+      1
+    )
+  }
+
   // Live theme colors read directly from Omarchy's active theme (zero hardcoded UI colors)
   property string themeYellowHex: ""
   property string themeGreenHex: ""
@@ -95,7 +165,14 @@ Item {
   readonly property color fg: Color.popups.text
   readonly property color bg: Color.popups.background
   readonly property color line: Color.popups.border
-  readonly property color dim: Color.muted
+  readonly property bool isDarkBg: (bg.r * 0.299 + bg.g * 0.587 + bg.b * 0.114) < 0.5
+  // High-contrast bold/heading & inline code colors so they stay crisp and never blend into theme colors
+  readonly property color strongText: isDarkBg ? "#ffffff" : "#0b0f14"
+  readonly property color bodyText: mixOn(bg, fg, 0.88)
+  readonly property color codeInlineText: isDarkBg ? "#f5d782" : "#9a5b00"
+  // Opaque secondary text. Color.muted is a surface on several themes
+  // (Matte Black: #333333 on #121212) and cannot be read.
+  readonly property color dim: mixOn(bg, fg, 0.78)
   readonly property color surface: Util.alpha(fg, 0.045)
   readonly property color surfaceHover: Util.alpha(fg, 0.09)
   readonly property color surfaceActive: Util.alpha(Color.accent, 0.18)
@@ -127,12 +204,14 @@ Item {
 
   readonly property string activeLang: {
     if (lang !== "auto") return lang
+    if (sysLang !== "") return sysLang
     var sys = String(Quickshell.env("LC_ALL") || Quickshell.env("LC_MESSAGES") || Quickshell.env("LANG") || "en").toLowerCase()
     if (sys.indexOf("nb") === 0 || sys.indexOf("nn") === 0 || sys.indexOf("no") === 0) return "no"
     var prefixes = ["sv", "da", "de", "fr", "es", "pt", "it", "pl", "ja", "zh"]
     for (var i = 0; i < prefixes.length; i++) {
       if (sys.indexOf(prefixes[i]) === 0) return prefixes[i]
     }
+    if (/[æøåÆØÅ]/.test(customContext)) return "no"
     return "en"
   }
 
@@ -223,6 +302,11 @@ Item {
     notifReadyBody:    { en: "Click to open Aeye and read the answer.", no: "Klikk for å åpne Aeye og lese svaret.", sv: "Klicka för att öppna Aeye och läsa svaret.", da: "Klik for at åbne Aeye og læse svaret.", de: "Klicken, um Aeye zu öffnen und die Antwort zu lesen.", fr: "Cliquez pour ouvrir Aeye et lire la réponse.", es: "Haz clic para abrir Aeye y leer la respuesta.", pt: "Clique para abrir o Aeye e ler a resposta.", it: "Clicca per aprire Aeye e leggere la risposta.", pl: "Kliknij, aby otworzyć Aeye i przeczytać odpowiedź.", ja: "クリックして Aeye を開き回答を表示します。", zh: "点击打开 Aeye 查看回答。" },
     notifOpenBtn:      { en: "View Answer", no: "Vis svar", sv: "Visa svar", da: "Vis svar", de: "Antwort ansehen", fr: "Voir la réponse", es: "Ver respuesta", pt: "Ver resposta", it: "Mostra risposta", pl: "Zobacz odpowiedź", ja: "回答を表示", zh: "查看回答" },
     recCode:           { en: "Code / error detected", no: "Kode / feilmelding oppdaget", sv: "Kod / fel upptäckt", da: "Kode / fejl fundet", de: "Code / Fehler erkannt", fr: "Code / erreur détecté", es: "Código / error detectado", pt: "Código / erro detectado", it: "Codice / errore rilevato", pl: "Wykryto kod / błąd", ja: "コード・エラーを検出", zh: "检测到代码/报错" },
+    tipFullscreen:     { en: "Toggle fullscreen mode (Esc to exit)", no: "Fullskjermmodus på/av (Esc for å gå ut)", sv: "Växla helskärmsläge", da: "Skift fuldskærm", de: "Vollbild umschalten", fr: "Basculer plein écran", es: "Pantalla completa", pt: "Tela cheia", it: "Schermo intero", pl: "Pełny ekran", ja: "全画面表示の切替", zh: "切换全屏模式" },
+    tipZoomIn:         { en: "Zoom in screenshot (Ctrl+Scroll)", no: "Zoom inn på skjermbildet (Ctrl+Scroll)", sv: "Zooma in", da: "Zoom ind", de: "Vergrößern", fr: "Zoomer", es: "Acercar", pt: "Aproximar", it: "Ingrandisci", pl: "Powiększ", ja: "拡大", zh: "放大" },
+    tipZoomOut:        { en: "Zoom out screenshot (Ctrl+Scroll)", no: "Zoom ut på skjermbildet (Ctrl+Scroll)", sv: "Zooma ut", da: "Zoom ud", de: "Verkleinern", fr: "Dézoomer", es: "Alejar", pt: "Afastar", it: "Rimpicciolisci", pl: "Pomniejsz", ja: "縮小", zh: "缩小" },
+    tipZoomReset:      { en: "Reset zoom to 100%", no: "Nullstill zoom til 100 %", sv: "Återställ zoom", da: "Nulstil zoom", de: "Zoom zurücksetzen", fr: "Réinitialiser le zoom", es: "Restablecer zoom", pt: "Redefinir zoom", it: "Ripristina zoom", pl: "Resetuj powiększenie", ja: "ズームを100%に戻す", zh: "重置缩放为 100%" },
+    openMainHud:       { en: "Open Main HUD", no: "Åpne hovedvindu", sv: "Öppna huvudfönster", da: "Åbn hovedvindue", de: "Haupt-HUD öffnen", fr: "Ouvrir le HUD", es: "Abrir HUD principal", pt: "Abrir HUD principal", it: "Apri HUD principale", pl: "Otwórz główne okno", ja: "メインHUDを開く", zh: "打开主窗口" },
     recGrammar:        { en: "Writing / grammar detected", no: "Tekst / grammatikk oppdaget", sv: "Text / grammatik upptäckt", da: "Tekst / grammatik fundet", de: "Text / Grammatik erkannt", fr: "Texte / grammaire détecté", es: "Texto / gramática detectado", pt: "Texto / gramática detectado", it: "Testo / grammatica rilevato", pl: "Wykryto tekst / gramatykę", ja: "文章・文法を検出", zh: "检测到文本/语法" },
     recRealtime:       { en: "Live / current info detected", no: "Sanntids- / fersk info oppdaget", sv: "Aktuell info upptäckt", da: "Aktuel info fundet", de: "Aktuelle Info erkannt", fr: "Info récente détectée", es: "Info actual detectada", pt: "Info recente detectada", it: "Info recente rilevata", pl: "Wykryto bieżące dane", ja: "最新・リアルタイム情報を検出", zh: "检测到实时/最新信息" },
     recDeep:           { en: "Complex chart / diagram detected", no: "Kompleks graf / diagram oppdaget", sv: "Komplext diagram upptäckt", da: "Komplekst diagram fundet", de: "Komplexes Diagramm erkannt", fr: "Graphique complexe détecté", es: "Gráfico complejo detectado", pt: "Gráfico complexo detectado", it: "Grafico complesso rilevato", pl: "Wykryto złożony wykres", ja: "複雑な図表を検出", zh: "检测到复杂图表" },
@@ -236,7 +320,28 @@ Item {
     posDockRightName:  { en: "Hyprland Tile Right", no: "Hyprland Tile Høyre", sv: "Hyprland Tile Höger", da: "Hyprland Tile Højre", de: "Hyprland Tile Rechts", fr: "Hyprland Tile Droite", es: "Hyprland Tile Derecha", pt: "Hyprland Tile Direita", it: "Hyprland Tile Destra", pl: "Hyprland Tile Prawy", ja: "Hyprland 右タイル", zh: "Hyprland 右平铺" },
     posDockLeftName:   { en: "Hyprland Tile Left", no: "Hyprland Tile Venstre", sv: "Hyprland Tile Vänster", da: "Hyprland Tile Venstre", de: "Hyprland Tile Links", fr: "Hyprland Tile Gauche", es: "Hyprland Tile Izquierda", pt: "Hyprland Tile Esquerda", it: "Hyprland Tile Sinistra", pl: "Hyprland Tile Lewy", ja: "Hyprland 左タイル", zh: "Hyprland 左平铺" },
     moveHudTo:         { en: "Click to move to", no: "Klikk for å flytte til", sv: "Klicka för att flytta till", da: "Klik for at flytte til", de: "Klicken zum Wechseln zu", fr: "Cliquer pour déplacer vers", es: "Clic para mover a", pt: "Clique para mover para", it: "Clicca per spostare in", pl: "Kliknij, aby przenieść do", ja: "クリックで移動:", zh: "点击切换到" },
-    inlineToolsHint:   { en: "↗ Draw arrows, boxes or crop directly on the image before sending", no: "↗ Tegn piler, bokser eller beskjær direkte på bildet før du sender", sv: "↗ Rita pilar, ramar eller beskär direkt på bilden innan du skickar", da: "↗ Tegn pile, bokse eller beskær direkte på billedet før afsendelse", de: "↗ Pfeile, Rahmen oder Zuschnitt direkt hier ins Bild zeichnen", fr: "↗ Dessinez flèches, cadres ou recadrez directement ici avant d'envoyer", es: "↗ Dibuja flechas, recuadros o recorta aquí mismo antes de enviar", pt: "↗ Desenhe setas, quadros ou recorte direto aqui antes de enviar", it: "↗ Disegna frecce, riquadri o ritaglia qui prima di inviare", pl: "↗ Rysuj strzałki, ramki lub przytnij obraz bezpośrednio tutaj", ja: "↗ 送信前にここで直接矢印・枠・切り抜きができます", zh: "↗ 发送前可直接在图上画箭头、框选或裁剪" }
+    inlineToolsHint:   { en: "↗ Draw arrows, boxes or crop directly on the image before sending", no: "↗ Tegn piler, bokser eller beskjær direkte på bildet før du sender", sv: "↗ Rita pilar, ramar eller beskär direkt på bilden innan du skickar", da: "↗ Tegn pile, bokse eller beskær direkte på billedet før afsendelse", de: "↗ Pfeile, Rahmen oder Zuschnitt direkt hier ins Bild zeichnen", fr: "↗ Dessinez flèches, cadres ou recadrez directement ici avant d'envoyer", es: "↗ Dibuja flechas, recuadros o recorta aquí mismo antes de enviar", pt: "↗ Desenhe setas, quadros ou recorte direto aqui antes de enviar", it: "↗ Disegna frecce, riquadri o ritaglia qui prima di inviare", pl: "↗ Rysuj strzałki, ramki lub przytnij obraz bezpośrednio tutaj", ja: "↗ 送信前にここで直接矢印・枠・切り抜きができます", zh: "↗ 发送前可直接在图上画箭头、框选或裁剪" },
+    historyTitle:      { en: "Recent Screenshot Chats", no: "Siste skjermbilder & samtaler", sv: "Senaste skärmbilder & chattar", da: "Seneste skærmbilleder & chats", de: "Letzte Screenshot-Chats", fr: "Captures & discussions récentes", es: "Capturas y chats recientes", pt: "Capturas e chats recentes", it: "Catture e chat recenti", pl: "Ostatnie zrzuty i czaty", ja: "最近のスクリーンショット会話", zh: "最近的截图对话" },
+    historyBtn:        { en: "History", no: "Historikk", sv: "Historik", da: "Historik", de: "Verlauf", fr: "Historique", es: "Historial", pt: "Histórico", it: "Cronologia", pl: "Historia", ja: "履歴", zh: "历史" },
+    hideImgShort:      { en: "Hide", no: "Skjul", sv: "Dölj", da: "Skjul", de: "Ausblenden", fr: "Masquer", es: "Ocultar", pt: "Ocultar", it: "Nascondi", pl: "Ukryj", ja: "隠す", zh: "隐藏" },
+    historyEmpty:      { en: "No previous screenshot sessions yet", no: "Ingen tidligere økter ennå", sv: "Inga tidigare sessioner ännu", da: "Ingen tidligere sessioner endnu", de: "Noch keine früheren Sitzungen", fr: "Aucune session précédente", es: "Aún no hay sesiones previas", pt: "Nenhuma sessão anterior ainda", it: "Nessuna sessione precedente", pl: "Brak wcześniejszych sesji", ja: "履歴はまだありません", zh: "暂无历史记录" },
+    clearHistory:      { en: "Clear", no: "Tøm", sv: "Rensa", da: "Ryd", de: "Leeren", fr: "Vider", es: "Limpiar", pt: "Limpar", it: "Svuota", pl: "Wyczyść", ja: "消去", zh: "清空" },
+    tipHistory:        { en: "Browse and reopen recent screenshots and chat threads", no: "Bla i og gjenåpne siste skjermbilder og samtaler", sv: "Bläddra bland senaste skärmbilder och samtal", da: "Gennemse og genåbn seneste skærmbilleder og samtaler", de: "Letzte Screenshots und Unterhaltungen wieder öffnen", fr: "Parcourir et rouvrir les captures et conversations récentes", es: "Explorar y reabrir capturas y conversaciones recientes", pt: "Navegar e reabrir capturas e conversas recentes", it: "Sfoglia e riapri catture e conversazioni recenti", pl: "Przeglądaj i otwieraj ostatnie zrzuty oraz rozmowy", ja: "最近のスクリーンショットと会話を再開", zh: "浏览并重新打开最近的截图与对话" },
+    handoffFrom:       { en: "Handed off from", no: "Overtok fra", sv: "Tog över från", da: "Overtog fra", de: "Übernommen von", fr: "Relais depuis", es: "Relevo de", pt: "Assumiu de", it: "Passato da", pl: "Przejęto od", ja: "引き継ぎ元:", zh: "接力自" },
+    thinking:          { en: "Thinking…", no: "Tenker…", sv: "Tänker…", da: "Tænker…", de: "Denkt…", fr: "Réflexion…", es: "Pensando…", pt: "Pensando…", it: "Elaborazione…", pl: "Myśli…", ja: "思考中…", zh: "思考中…" },
+    newShotAttached:   { en: "New screenshot attached", no: "Nytt skjermbilde lagt til", sv: "Ny skärmbild bifogad", da: "Nyt skærmbillede vedhæftet", de: "Neuer Screenshot angehängt", fr: "Nouvelle capture jointe", es: "Nueva captura adjunta", pt: "Nova captura anexada", it: "Nuova cattura allegata", pl: "Dołączono nowy zrzut", ja: "新しいスクリーンショットを追加", zh: "已附加新截图" },
+    tipCaptureInChat:  { en: "Take a new screenshot and add it to this conversation", no: "Ta et nytt skjermbilde og legg det til i denne samtalen", sv: "Ta en ny skärmbild och lägg till i detta samtal", da: "Tag et nyt skærmbillede og føj det til samtalen", de: "Neuen Screenshot aufnehmen und diesem Gespräch hinzufügen", fr: "Prendre une nouvelle capture et l'ajouter à cette conversation", es: "Tomar una nueva captura y añadirla a esta conversación", pt: "Tirar uma nova captura e adicioná-la a esta conversa", it: "Acquisisci una nuova cattura e aggiungila alla conversazione", pl: "Zrób nowy zrzut ekranu i dodaj do tej rozmowy", ja: "新しいスクリーンショットを撮ってこの会話に追加", zh: "截取新截图并添加到当前对话" },
+    newShotPrompt:     { en: "Analyze this new screenshot in the context of our conversation.", no: "Se på dette nye skjermbildet i sammenheng med samtalen vår.", sv: "Analysera denna nya skärmbild i kontexten av vårt samtal.", da: "Analyser dette nye skærmbillede i sammenhæng med vores samtale.", de: "Analysiere diesen neuen Screenshot im Kontext unseres Gesprächs.", fr: "Analysez cette nouvelle capture dans le contexte de notre conversation.", es: "Analiza esta nueva captura en el contexto de nuestra conversación.", pt: "Analise esta nova captura no contexto da nossa conversa.", it: "Analizza questa nuova cattura nel contesto della nostra conversazione.", pl: "Przeanalizuj ten nowy zrzut ekranu w kontekście naszej rozmowy.", ja: "これまでの会話を踏まえてこの新しいスクリーンショットを分析してください。", zh: "结合我们的对话上下文分析这张新截图。" },
+    copyChat:          { en: "Copy Chat", no: "Kopier alt", sv: "Kopiera allt", da: "Kopiér alt", de: "Chat kopieren", fr: "Tout copier", es: "Copiar todo", pt: "Copiar tudo", it: "Copia chat", pl: "Kopiuj czat", ja: "会話をコピー", zh: "复制对话" },
+    copySelected:      { en: "Copy Selected", no: "Kopier valgte", sv: "Kopiera valda", da: "Kopiér valgte", de: "Auswahl kopieren", fr: "Copier la sélection", es: "Copiar selección", pt: "Copiar seleção", it: "Copia selezionati", pl: "Kopiuj wybrane", ja: "選択をコピー", zh: "复制所选" },
+    selectTurn:        { en: "Select", no: "Velg", sv: "Välj", da: "Vælg", de: "Wählen", fr: "Sélect.", es: "Selec.", pt: "Selec.", it: "Selez.", pl: "Wybierz", ja: "選択", zh: "选择" },
+    selectedTurn:      { en: "✓ Selected", no: "✓ Valgt", sv: "✓ Vald", da: "✓ Valgt", de: "✓ Gewählt", fr: "✓ Sélect.", es: "✓ Selec.", pt: "✓ Selec.", it: "✓ Selez.", pl: "✓ Wybrano", ja: "✓ 選択済", zh: "✓ 已选" },
+    tipCopyChat:       { en: "Copy the entire conversation (or selected messages) to your clipboard", no: "Kopier hele samtalen (eller valgte meldinger) til utklippstavlen", sv: "Kopiera hela samtalet (eller valda meddelanden) till urklipp", da: "Kopiér hele samtalen (eller valgte beskeder) til udklipsholderen", de: "Gesamte Unterhaltung (oder ausgewählte Nachrichten) in die Zwischenablage kopieren", fr: "Copier toute la conversation (ou les messages sélectionnés)", es: "Copiar toda la conversación (o los mensajes seleccionados)", pt: "Copiar toda a conversa (ou as mensagens selecionadas)", it: "Copia l'intera conversazione (o i messaggi selezionati)", pl: "Skopiuj całą rozmowę (lub wybrane wiadomości) do schowka", ja: "会話全体（または選択したメッセージ）をクリップボードにコピー", zh: "将整个对话（或所选消息）复制到剪贴板" },
+    tipSelectTurn:     { en: "Select multiple messages to copy them together", no: "Velg flere meldinger for å kopiere dem samlet", sv: "Välj flera meddelanden för att kopiera dem tillsammans", da: "Vælg flere beskeder for at kopiere dem samlet", de: "Mehrere Nachrichten auswählen, um sie zusammen zu kopieren", fr: "Sélectionner plusieurs messages pour les copier ensemble", es: "Seleccionar varios mensajes para copiarlos juntos", pt: "Selecionar várias mensagens para copiá-las juntas", it: "Seleziona più messaggi per copiarli insieme", pl: "Zaznacz wiele wiadomości, aby skopiować je razem", ja: "複数のメッセージを選択してまとめてコピー", zh: "选择多条消息以便一起复制" },
+    undoMark:          { en: "Undo", no: "Angre", sv: "Ångra", da: "Fortryd", de: "Rückgängig", fr: "Annuler", es: "Deshacer", pt: "Desfazer", it: "Annulla", pl: "Cofnij", ja: "元に戻す", zh: "撤销" },
+    tipUndoMark:       { en: "Undo the last drawn arrow or box", no: "Angre siste tegnede pil eller boks", sv: "Ångra senast ritade pil eller ruta", da: "Fortryd senest tegnede pil eller boks", de: "Letzten Pfeil oder Rahmen rückgängig machen", fr: "Annuler la dernière flèche ou boîte", es: "Deshacer la última flecha o recuadro", pt: "Desfazer a última seta ou caixa", it: "Annulla l'ultima freccia o riquadro", pl: "Cofnij ostatnią strzałkę lub ramkę", ja: "最後に描いた矢印または枠を取り消す", zh: "撤销最后绘制的箭头或方框" },
+    panTool:           { en: "Pan", no: "Panorer", sv: "Panorera", da: "Panorer", de: "Schwenken", fr: "Déplacer", es: "Mover", pt: "Mover", it: "Sposta", pl: "Przesuń", ja: "移動", zh: "平移" },
+    tipPanTool:        { en: "Drag to pan the zoomed screenshot (or right-click drag anytime)", no: "Dra for å panorere i zoomet bilde (eller høyreklikk-dra når som helst)", sv: "Dra för att panorera i zoomad bild (eller högerklick-dra)", da: "Træk for at panorere i zoomet billede (eller højreklik-træk)", de: "Ziehen zum Schwenken im gezoomten Bild (oder Rechtsklick-Ziehen)", fr: "Faire glisser pour déplacer l'image zoomée (ou clic droit-glisser)", es: "Arrastrar para mover la imagen con zoom (o clic derecho-arrastrar)", pt: "Arrastar para mover a imagem ampliada (ou botão direito-arrastar)", it: "Trascina per spostare l'immagine ingrandita (o tasto destro-trascina)", pl: "Przeciągnij, aby przesunąć powiększony obraz (lub PPM-przeciągnij)", ja: "ドラッグして拡大画像を移動（または右ドラッグ）", zh: "拖动以平移放大后的截图（或随时右键拖动）" }
   })
 
   function t(key) {
@@ -245,13 +350,104 @@ Item {
     return entry[activeLang] || entry["en"] || key
   }
 
-  readonly property var modelChoices: [
-    { provider: "agy", vendorKey: "gemini", id: "gemini-3.8-flash-high", label: "Flash", vendor: "Gemini", badge: "Fast", tipKey: "tipModelFlash" },
-    { provider: "agy", vendorKey: "gemini", id: "gemini-4-argon-high", label: "Argon", vendor: "Gemini", badge: "Deep", tipKey: "tipModelArgon" },
-    { provider: "agy", vendorKey: "anthropic", id: "claude-sonnet-5-5-medium", label: "Sonnet 5.5", vendor: "Anthropic", badge: "Code", tipKey: "tipModelSonnet" },
-    { provider: "grok", vendorKey: "xai", id: "grok-4.7", label: "Grok 4.7", vendor: "xAI", badge: "Direct", tipKey: "tipModelGrok" },
-    { provider: "openai", vendorKey: "openai", id: "gpt-4o", label: "GPT-4o", vendor: "OpenAI", badge: "Vision", tipKey: "tipModelOpenai" }
+  readonly property var baseModelChoices: [
+    { provider: "agy", vendorKey: "gemini", id: "gemini-3.8-flash-high", label: "Flash", vendor: "Gemini", badge: "Fast", tipKey: "tipModelFlash", custom: false, reasoning: false },
+    { provider: "agy", vendorKey: "gemini", id: "gemini-4-argon-high", label: "Argon", vendor: "Gemini", badge: "Deep", tipKey: "tipModelArgon", custom: false, reasoning: true },
+    { provider: "agy", vendorKey: "anthropic", id: "claude-sonnet-5-5-medium", label: "Sonnet 5.5", vendor: "Anthropic", badge: "Code", tipKey: "tipModelSonnet", custom: false, reasoning: true },
+    { provider: "grok", vendorKey: "xai", id: "grok-4.7", label: "Grok 4.7", vendor: "xAI", badge: "Direct", tipKey: "tipModelGrok", custom: false, reasoning: true },
+    { provider: "openai", vendorKey: "openai", id: "gpt-4o", label: "GPT-4o", vendor: "OpenAI", badge: "Vision", tipKey: "tipModelOpenai", custom: false, reasoning: true }
   ]
+
+  property string preSysDebugModelId: ""
+  property string preSysDebugProvider: ""
+
+  function isModelReasoning(modelId) {
+    var id = String(modelId || "")
+    for (var i = 0; i < modelChoices.length; i++) {
+      if (modelChoices[i].id === id && modelChoices[i].reasoning !== undefined)
+        return modelChoices[i].reasoning === true
+    }
+    var low = id.toLowerCase()
+    if (low.indexOf("non-reasoning") >= 0 || low.indexOf("lite") >= 0 || low.indexOf("mini") >= 0 || low.indexOf("fast") >= 0 || low.indexOf("flash") >= 0)
+      return false
+    return true
+  }
+
+  function bestReadyReasoningModel() {
+    var preferred = ["claude-sonnet-5-5-medium", "gemini-4-argon-high", "grok-4.7", "gpt-4o"]
+    for (var p = 0; p < preferred.length; p++) {
+      for (var i = 0; i < modelChoices.length; i++) {
+        if (modelChoices[i].id === preferred[p] && isVendorReady(modelChoices[i].vendorKey))
+          return modelChoices[i]
+      }
+    }
+    for (var j = 0; j < modelChoices.length; j++) {
+      if (isVendorReady(modelChoices[j].vendorKey) && isModelReasoning(modelChoices[j].id))
+        return modelChoices[j]
+    }
+    return null
+  }
+
+  readonly property var modelChoices: {
+    var out = []
+    for (var i = 0; i < baseModelChoices.length; i++) out.push(baseModelChoices[i])
+    for (var j = 0; j < customModels.length; j++) {
+      var cm = customModels[j]
+      if (cm && cm.id) out.push(cm)
+    }
+    return out
+  }
+
+  function vendorMeta(vendorKey) {
+    var vk = String(vendorKey || "gemini").toLowerCase()
+    if (vk === "anthropic") return { provider: "agy", vendorKey: "anthropic", vendor: "Anthropic" }
+    if (vk === "xai" || vk === "grok") return { provider: "grok", vendorKey: "xai", vendor: "xAI" }
+    if (vk === "openai") return { provider: "openai", vendorKey: "openai", vendor: "OpenAI" }
+    return { provider: "agy", vendorKey: "gemini", vendor: "Gemini" }
+  }
+
+  function addCustomModel(vendorKey, rawId, rawLabel) {
+    var id = String(rawId || "").replace(/^\s+|\s+$/g, "")
+    if (id.length === 0) return
+    for (var i = 0; i < modelChoices.length; i++) {
+      if (modelChoices[i].id === id) {
+        pickModelAt(i)
+        return
+      }
+    }
+    var meta = vendorMeta(vendorKey)
+    var lbl = String(rawLabel || "").replace(/^\s+|\s+$/g, "")
+    if (lbl.length === 0) lbl = id
+    var entry = {
+      provider: meta.provider,
+      vendorKey: meta.vendorKey,
+      id: id,
+      label: lbl,
+      vendor: meta.vendor,
+      badge: "Custom",
+      tipKey: "tipModelPill",
+      custom: true
+    }
+    var next = customModels.concat([entry])
+    customModels = next
+    saveConfig("customModels", JSON.stringify(next), "json")
+    pickModelAt(baseModelChoices.length + next.length - 1)
+  }
+
+  function removeCustomModel(modelId) {
+    var id = String(modelId || "")
+    var next = []
+    for (var i = 0; i < customModels.length; i++) {
+      if (customModels[i] && customModels[i].id !== id) next.push(customModels[i])
+    }
+    customModels = next
+    saveConfig("customModels", JSON.stringify(next), "json")
+    if (model === id) {
+      var active = activeModelIndices()
+      if (active.length > 0) pickModelAt(active[0])
+      else if (baseModelChoices.length > 0) pickModelAt(0)
+    }
+  }
 
   function isVendorReady(vendorKey) {
     for (var i = 0; i < providerStatuses.length; i++) {
@@ -387,6 +583,23 @@ Item {
     providersProc.running = true
   }
 
+  function loadAvailableModels(force) {
+    if (modelsProc.running) return
+    loadingModels = true
+    var cmd = [binPath(), "models", "--lang", activeLang]
+    if (force === true) cmd.push("--refresh")
+    modelsProc.command = cmd
+    modelsProc.running = true
+  }
+
+  function applyAvailableModels(raw) {
+    loadingModels = false
+    try {
+      var obj = JSON.parse(String(raw || "{}"))
+      if (obj && typeof obj === "object") availableModels = obj
+    } catch (e) {}
+  }
+
   function applyProviders(raw) {
     try {
       var arr = JSON.parse(String(raw || "[]"))
@@ -434,14 +647,26 @@ Item {
       provider = String(obj.provider)
       model = String(obj.model)
     }
-    if (obj.autosend !== undefined && obj.autosend !== null) autosend = obj.autosend === true
+    if (obj.autosend !== undefined && obj.autosend !== null) {
+      autosend = obj.autosend === true
+      minimalMode = autosend
+    } else if (obj.minimalMode !== undefined && obj.minimalMode !== null) {
+      autosend = obj.minimalMode === true
+      minimalMode = autosend
+    }
     if (obj.minimizeOnSend !== undefined && obj.minimizeOnSend !== null) minimizeOnSend = obj.minimizeOnSend === true
     if (obj.showReason !== undefined && obj.showReason !== null) showReason = obj.showReason === true
     if (obj.systemDebug !== undefined && obj.systemDebug !== null) systemDebug = obj.systemDebug === true
+    if (obj.agentMemory !== undefined && obj.agentMemory !== null) agentMemory = obj.agentMemory === true
+    if (obj.autoDelegate !== undefined && obj.autoDelegate !== null) autoDelegate = obj.autoDelegate !== false
+    if (obj.customContext !== undefined && obj.customContext !== null) customContext = String(obj.customContext)
+    if (obj.contextFile !== undefined && obj.contextFile !== null) contextFile = String(obj.contextFile)
+    if (obj.providerAuthMode && typeof obj.providerAuthMode === "object") providerAuthMode = obj.providerAuthMode
+    if (obj.modelAuthMode && typeof obj.modelAuthMode === "object") modelAuthMode = obj.modelAuthMode
+    if (Array.isArray(obj.sessionHistory)) sessionHistory = obj.sessionHistory
     if (obj.lastSaveDir && String(obj.lastSaveDir).length > 0) lastSaveDir = String(obj.lastSaveDir)
     if (obj.watch !== undefined && obj.watch !== null) watch = obj.watch === true
     if (obj.lang && String(obj.lang).length > 0) lang = String(obj.lang)
-    if (obj.minimalMode !== undefined && obj.minimalMode !== null) minimalMode = obj.minimalMode === true
     if (obj.hudPlacement && String(obj.hudPlacement).length > 0) {
       var hp = String(obj.hudPlacement)
       if (hp === "bottom" || hp === "top" || hp === "corner" || hp === "dock-right" || hp === "dock-left")
@@ -455,9 +680,33 @@ Item {
       }
       customPrompts = clean
     }
+    if (Array.isArray(obj.customModels)) {
+      var cleanMods = []
+      for (var m = 0; m < obj.customModels.length; m++) {
+        var cm = obj.customModels[m]
+        if (cm && cm.id && String(cm.id).length > 0) {
+          var meta = vendorMeta(cm.vendorKey || cm.provider)
+          cleanMods.push({
+            provider: meta.provider,
+            vendorKey: meta.vendorKey,
+            id: String(cm.id),
+            label: String(cm.label || cm.id),
+            vendor: meta.vendor,
+            badge: String(cm.badge || "Custom"),
+            tipKey: "tipModelPill",
+            custom: true
+          })
+        }
+      }
+      customModels = cleanMods
+    }
   }
 
+  property bool suppressConfigReload: false
+
   function saveConfig(key, value, type) {
+    suppressConfigReload = true
+    configReloadCooldown.stop()
     var cmd = [binPath(), "config-set", key, String(value), type || "string"]
     if (configProc.running) configProc.queue = configProc.queue.concat([cmd])
     else {
@@ -467,6 +716,8 @@ Item {
   }
 
   function saveConfigPatch(obj) {
+    suppressConfigReload = true
+    configReloadCooldown.stop()
     var cmd = [binPath(), "config-patch", JSON.stringify(obj)]
     if (configProc.running) configProc.queue = configProc.queue.concat([cmd])
     else {
@@ -477,9 +728,43 @@ Item {
 
   function pickAutosend(on) {
     autosend = on
-    saveConfig("autosend", on ? "true" : "false", "bool")
+    minimalMode = on
+    saveConfigPatch({ autosend: on, minimalMode: on })
     if (on && windowOpen && imagePath !== "" && answer === "" && note === "" && !busy && inflight === "") {
       startRead()
+    }
+  }
+
+  function setProviderAuthMode(vendor, mode) {
+    var v = String(vendor || "").toLowerCase()
+    var m = String(mode || "cli").toLowerCase() === "api" ? "api" : "cli"
+    if (v.length === 0) return
+    var next = {}
+    var keys = Object.keys(providerAuthMode || {})
+    for (var i = 0; i < keys.length; i++) next[keys[i]] = providerAuthMode[keys[i]]
+    next[v] = m
+    providerAuthMode = next
+    saveConfig("providerAuthMode", JSON.stringify(next), "json")
+    Qt.callLater(root.loadProviders)
+  }
+
+  function setModelAuthMode(modelId, mode) {
+    var id = String(modelId || "")
+    var m = String(mode || "cli").toLowerCase() === "api" ? "api" : "cli"
+    if (id.length === 0) return
+    var next = {}
+    var keys = Object.keys(modelAuthMode || {})
+    for (var i = 0; i < keys.length; i++) next[keys[i]] = modelAuthMode[keys[i]]
+    next[id] = m
+    modelAuthMode = next
+    saveConfig("modelAuthMode", JSON.stringify(next), "json")
+  }
+
+  function toggleFullscreen() {
+    fullscreen = !fullscreen
+    if (isDocked) {
+      remapping = true
+      remapTimer.restart()
     }
   }
 
@@ -495,12 +780,199 @@ Item {
 
   function pickSystemDebug(on) {
     systemDebug = on
-    saveConfig("systemDebug", on ? "true" : "false", "bool")
+    if (on) {
+      if (!isModelReasoning(model)) {
+        var best = bestReadyReasoningModel()
+        if (best && best.id !== model) {
+          preSysDebugModelId = model
+          preSysDebugProvider = provider
+          provider = best.provider
+          model = best.id
+          saveConfigPatch({ systemDebug: true, visionOverride: true, provider: best.provider, model: best.id })
+          return
+        }
+      }
+      saveConfig("systemDebug", "true", "bool")
+    } else {
+      if (preSysDebugModelId !== "") {
+        var restoreId = preSysDebugModelId
+        var restoreProv = preSysDebugProvider
+        preSysDebugModelId = ""
+        preSysDebugProvider = ""
+        model = restoreId
+        provider = restoreProv
+        saveConfigPatch({ systemDebug: false, provider: restoreProv, model: restoreId })
+        return
+      }
+      saveConfig("systemDebug", "false", "bool")
+    }
   }
 
   function pickMinimalMode(on) {
     minimalMode = on
     saveConfig("minimalMode", on ? "true" : "false", "bool")
+  }
+
+  function pickAgentMemory(on) {
+    agentMemory = on
+    saveConfig("agentMemory", on ? "true" : "false", "bool")
+  }
+
+  function pickAutoDelegate(on) {
+    autoDelegate = on
+    saveConfig("autoDelegate", on ? "true" : "false", "bool")
+  }
+
+  function bestSpecialistFor(cat) {
+    var prefs = []
+    if (cat === "code" || cat === "grammar") {
+      prefs = ["claude-opus-5-5-high", "claude-opus-5-5-medium", "claude-sonnet-5-5-high", "claude-sonnet-5-5-medium", "gemini-4-neon-high", "gemini-4-argon-high", "gpt-4.1", "gpt-4o", "grok-4.7"]
+    } else if (cat === "deep") {
+      prefs = ["gemini-4-neon-xhigh", "gemini-4-neon-high", "gemini-4-argon-high", "claude-opus-5-5-high", "claude-sonnet-5-5-medium", "o4-mini", "gpt-4o", "grok-4.20-0309-reasoning", "grok-4.7"]
+    } else if (cat === "realtime") {
+      prefs = ["grok-4.7", "grok-4.20-0309-reasoning", "gemini-4-neon-high", "gemini-3.8-flash-high"]
+    } else {
+      prefs = ["grok-4.7", "claude-sonnet-5-5-medium", "gemini-4-argon-high", "gemini-4-neon-high", "gpt-4o"]
+    }
+    for (var p = 0; p < prefs.length; p++) {
+      for (var i = 0; i < modelChoices.length; i++) {
+        if (modelChoices[i].id === prefs[p] && isVendorReady(modelChoices[i].vendorKey))
+          return modelChoices[i]
+      }
+    }
+    return null
+  }
+
+  function scrollToBottom() {
+    if (middleScroll && middleScroll.contentHeight > middleScroll.height) {
+      middleScroll.contentY = Math.max(0, middleScroll.contentHeight - middleScroll.height)
+    }
+  }
+
+  function classifyFollowup(question, fallbackCat) {
+    var q = String(question || "").toLowerCase()
+    if (/(kode|code|repo|git|github|script|terminal|bash|python|qml|json|api|cli|bug|feil|error|stack|kompil|build|test)/.test(q))
+      return "code"
+    if (/(dybde|depth|detalj|forklar|explain|hvorfor|why|hvordan|how|analyser|analyze|oppsummer|summarize|sammenlign|compare)/.test(q))
+      return "deep"
+    if (fallbackCat && fallbackCat.length > 0)
+      return fallbackCat
+    return "general"
+  }
+
+  function buildPriorTranscript() {
+    var lines = []
+    var turnNum = 0
+    var shotNum = 1
+    var perTurnLimit = chatHistory.length > 10 ? 900 : 1800
+    for (var i = 0; i < chatHistory.length; i++) {
+      var m = chatHistory[i]
+      if (!m) continue
+      if (m.role === "screenshot") {
+        shotNum += 1
+        var p = String(m.imagePath || "")
+        var fname = p.lastIndexOf("/") >= 0 ? p.substring(p.lastIndexOf("/") + 1) : p
+        lines.push("[System: The user captured and attached NEW screenshot #" + shotNum + " (" + fname + "). From this point onward, shot.png shows this new screenshot, while earlier turns above discussed the previous screenshot(s).]")
+        continue
+      }
+      if (!m.text) continue
+      turnNum += 1
+      var tag = m.role === "user" ? ("Turn " + turnNum + " - User") : ("Turn " + turnNum + " - Assistant (" + (m.model || "AI") + ")")
+      var txt = String(m.text)
+      if (m.role !== "user" && txt.length > perTurnLimit) {
+        txt = txt.substring(0, perTurnLimit) + "…"
+      }
+      lines.push(tag + ": " + txt)
+    }
+    var full = lines.join("\n\n")
+    return full.length > 14000 ? full.substring(0, 14000) : full
+  }
+
+  function saveCurrentSession() {
+    if (!imagePath || (answer === "" && chatHistory.length === 0)) return
+    var d = new Date()
+    var tLbl = pad2(d.getHours()) + ":" + pad2(d.getMinutes())
+    var sid = currentSessionId !== "" ? currentSessionId : (String(d.getTime()))
+    currentSessionId = sid
+
+    var serialTurns = []
+    for (var i = 0; i < chatHistory.length; i++) {
+      var c = chatHistory[i]
+      if (c && (c.text || c.role === "screenshot")) {
+        serialTurns.push({
+          role: c.role,
+          text: String(c.text || "").substring(0, 2000),
+          imagePath: c.imagePath || "",
+          model: c.model || "",
+          handoffFrom: c.handoffFrom || ""
+        })
+      }
+    }
+
+    var firstText = serialTurns.length > 0 ? serialTurns[0].text : answer
+    var oneLine = String(firstText || "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "").substring(0, 75)
+    var entry = {
+      id: sid,
+      timeLabel: tLbl,
+      imagePath: imagePath,
+      title: oneLine !== "" ? oneLine : imagePath.substring(imagePath.lastIndexOf("/") + 1),
+      category: detectedCategory,
+      provider: provider,
+      model: model,
+      activeTurnModelLabel: activeTurnModelLabel,
+      handoffFromLabel: handoffFromLabel,
+      answer: String(answer || "").substring(0, 3000),
+      chatHistory: serialTurns,
+      aiPrompts: aiPrompts
+    }
+
+    var next = [entry]
+    for (var j = 0; j < sessionHistory.length && next.length < 12; j++) {
+      if (sessionHistory[j] && sessionHistory[j].id !== sid) next.push(sessionHistory[j])
+    }
+    sessionHistory = next
+    saveConfig("sessionHistory", JSON.stringify(next), "json")
+  }
+
+  function restoreSession(sess) {
+    if (!sess) return
+    historyDrawerOpen = false
+    currentSessionId = String(sess.id || "")
+    imagePath = String(sess.imagePath || "")
+    detectedCategory = String(sess.category || "")
+    if (sess.provider) provider = String(sess.provider)
+    if (sess.model) model = String(sess.model)
+    activeTurnModelLabel = String(sess.activeTurnModelLabel || (producerName + " " + modelLabel))
+    handoffFromLabel = String(sess.handoffFromLabel || "")
+    aiPrompts = Array.isArray(sess.aiPrompts) ? sess.aiPrompts : []
+    var turns = []
+    if (Array.isArray(sess.chatHistory)) {
+      for (var i = 0; i < sess.chatHistory.length; i++) {
+        var t = sess.chatHistory[i]
+        if (t && (t.text || t.role === "screenshot")) {
+          turns.push({
+            role: t.role,
+            text: t.text || "",
+            imagePath: t.imagePath || "",
+            model: t.model || "",
+            handoffFrom: t.handoffFrom || "",
+            blocks: t.role === "assistant" ? parseMarkdownBlocks(t.text) : []
+          })
+        }
+      }
+    }
+    chatHistory = turns
+    answer = String(sess.answer || "")
+    note = answer
+    errorText = ""
+    pendingNewShot = false
+    compactChatMode = false
+  }
+
+  function clearSessionHistory() {
+    sessionHistory = []
+    historyDrawerOpen = false
+    saveConfig("sessionHistory", "[]", "json")
   }
 
   function pickHudPlacement(mode) {
@@ -555,6 +1027,7 @@ Item {
     lang = supportedLocales[nextIdx].code
     saveConfig("lang", lang, "string")
     hint = "Locale: " + localeDisplayLabel
+    if (availableModels && Object.keys(availableModels).length > 0) loadAvailableModels(false)
   }
 
   function addCustomPromptText(rawText) {
@@ -578,6 +1051,39 @@ Item {
     }
     customPrompts = next
     saveConfig("customPrompts", JSON.stringify(next), "json")
+  }
+
+  function setCustomContext(rawText) {
+    var txt = String(rawText || "").replace(/^\s+|\s+$/g, "")
+    customContext = txt
+    saveConfig("customContext", txt, "string")
+  }
+
+  function setContextFile(rawPath) {
+    var p = String(rawPath || "").replace(/^\s+|\s+$/g, "")
+    contextFile = p
+    saveConfig("contextFile", p, "string")
+  }
+
+  function editContextFile(rawPath) {
+    var p = String(rawPath || "").replace(/^\s+|\s+$/g, "")
+    if (contextToolProc.running) contextToolProc.running = false
+    contextToolProc.command = p.length > 0 ? [binPath(), "edit-context", p] : [binPath(), "edit-context"]
+    contextToolProc.running = true
+  }
+
+  function pickContextFile() {
+    if (contextToolProc.running) contextToolProc.running = false
+    contextToolProc.command = [binPath(), "pick-context"]
+    contextToolProc.running = true
+  }
+
+  function onContextToolLine(line) {
+    var parts = String(line || "").split("\t")
+    if (parts[0] === "OK" && parts.length > 1) {
+      var chosen = parts.slice(1).join("\t").replace(/^\s+|\s+$/g, "")
+      if (chosen.length > 0) contextFile = chosen
+    }
   }
 
   function pickModelAt(index) {
@@ -610,7 +1116,68 @@ Item {
     copyProc.command = [binPath(), "copy", answer]
     copyProc.running = true
     copiedBlockIdx = -1
+    copiedTurnIdx = -1
+    copiedChatFeedback = false
     copiedFeedback = true
+    copyResetTimer.restart()
+  }
+
+  function copySingleTurn(rawText, turnIdx) {
+    var txt = String(rawText || "").replace(/^\s+|\s+$/g, "")
+    if (!txt) return
+    if (copyProc.running) copyProc.running = false
+    copyProc.command = [binPath(), "copy", txt]
+    copyProc.running = true
+    copiedBlockIdx = -1
+    copiedFeedback = false
+    copiedChatFeedback = false
+    copiedTurnIdx = turnIdx
+    copyResetTimer.restart()
+  }
+
+  function isTurnSelected(turnIdx) {
+    return selectedTurns.indexOf(turnIdx) >= 0
+  }
+
+  function toggleSelectTurn(turnIdx) {
+    var next = []
+    var found = false
+    for (var i = 0; i < selectedTurns.length; i++) {
+      if (selectedTurns[i] === turnIdx) found = true
+      else next.push(selectedTurns[i])
+    }
+    if (!found) next.push(turnIdx)
+    selectedTurns = next
+  }
+
+  function copyFullChat() {
+    var parts = []
+    var useSelected = selectedTurns.length > 0
+    for (var i = 0; i < chatHistory.length; i++) {
+      if (useSelected && selectedTurns.indexOf(i) < 0) continue
+      var m = chatHistory[i]
+      if (!m) continue
+      if (m.role === "screenshot") {
+        parts.push("[" + (m.text || t("newShotAttached")) + ": " + (m.imagePath || "") + "]")
+      } else if (m.text) {
+        var hdr = m.role === "user" ? "**You:**" : ("**" + (m.model || (producerName + " " + modelLabel)) + ":**")
+        parts.push(hdr + "\n" + String(m.text).replace(/^\s+|\s+$/g, ""))
+      }
+    }
+    if (answer !== "" && (!useSelected || selectedTurns.indexOf(999999) >= 0)) {
+      var curHdr = "**" + (activeTurnModelLabel !== "" ? activeTurnModelLabel : (producerName + " " + modelLabel)) + ":**"
+      parts.push(curHdr + "\n" + String(answer).replace(/^\s+|\s+$/g, ""))
+    }
+    if (parts.length === 0) return
+    var fullText = parts.join("\n\n---\n\n")
+    if (copyProc.running) copyProc.running = false
+    copyProc.command = [binPath(), "copy", fullText]
+    copyProc.running = true
+    copiedBlockIdx = -1
+    copiedTurnIdx = -1
+    copiedFeedback = false
+    copiedChatFeedback = true
+    if (useSelected) selectedTurns = []
     copyResetTimer.restart()
   }
 
@@ -740,14 +1307,14 @@ Item {
     out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(_, label) {
       return "<span style=\"color:" + colorCss(Color.accent) + "\"><u>" + label + "</u></span>"
     })
-    // Bold **text**
-    out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    // Bold **text** — high-contrast bright white/black so it pops cleanly on every theme
+    out = out.replace(/\*\*([^*]+)\*\*/g, "<b style=\"color:" + colorCss(root.strongText) + "\">$1</b>")
     // Italic *text*
     out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>")
-    // Restore inline code spans styled with live theme accent
+    // Restore inline code spans styled in warm high-contrast gold/amber
     out = out.replace(/\uE000CODE(\d+)\uE001/g, function(_, n) {
       var code = codes[parseInt(n, 10)] || ""
-      return "<code style=\"color:" + colorCss(Color.accent) + "\">" + code + "</code>"
+      return "<code style=\"color:" + colorCss(root.codeInlineText) + "\">" + code + "</code>"
     })
     return out
   }
@@ -818,12 +1385,13 @@ Item {
     return "<pre style=\"margin:0;white-space:pre-wrap;\">" + outLines.join("\n") + "</pre>"
   }
 
-  // Parse Markdown text into structured blocks (heading, bullet, paragraph, fenced code)
+  // Parse Markdown text into unified selectable RichText sections + fenced code cards
   function parseMarkdownBlocks(md) {
     var src = String(md || "").replace(/\r\n/g, "\n")
     if (src.replace(/^\s+|\s+$/g, "") === "") return []
     var lines = src.split("\n")
     var blocks = []
+    var richParts = []
     var para = []
     var inCode = false
     var codeLang = ""
@@ -831,9 +1399,15 @@ Item {
 
     function flushPara() {
       if (para.length === 0) return
-      var joined = para.join("<br/>")
-      blocks.push({ kind: "paragraph", html: joined, raw: para.join("\n"), lang: "", marker: "" })
+      richParts.push("<p style=\"margin:0 0 6px 0;\">" + para.join("<br/>") + "</p>")
       para = []
+    }
+
+    function flushRich() {
+      flushPara()
+      if (richParts.length === 0) return
+      blocks.push({ kind: "richtext", html: richParts.join(""), raw: "", lang: "", marker: "" })
+      richParts = []
     }
 
     for (var i = 0; i < lines.length; i++) {
@@ -841,7 +1415,7 @@ Item {
       var fence = line.match(/^\s*```([A-Za-z0-9_+#.-]*)\s*$/)
       if (fence) {
         if (!inCode) {
-          flushPara()
+          flushRich()
           inCode = true
           codeLang = String(fence[1] || "").toLowerCase()
           codeLines = []
@@ -866,14 +1440,14 @@ Item {
       var hm = trimmed.match(/^(#{1,6})\s+(.+)$/)
       if (hm) {
         flushPara()
-        blocks.push({ kind: "heading", level: hm[1].length, html: formatInlineHtml(hm[2]), raw: hm[2], lang: "", marker: "" })
+        richParts.push("<p style=\"margin:8px 0 4px 0;font-weight:700;color:" + colorCss(root.strongText) + ";\">" + formatInlineHtml(hm[2]) + "</p>")
         continue
       }
       var bm = line.match(/^\s*([-*•]|\d+\.)\s+(.+)$/)
       if (bm) {
         flushPara()
         var mk = (bm[1] === "-" || bm[1] === "*") ? "•" : bm[1]
-        blocks.push({ kind: "bullet", marker: mk, html: formatInlineHtml(bm[2]), raw: bm[2], lang: "" })
+        richParts.push("<p style=\"margin:0 0 5px 10px;\"><span style=\"color:" + colorCss(Color.accent) + ";font-weight:700;\">" + escapeHtml(mk) + "&nbsp;&nbsp;</span>" + formatInlineHtml(bm[2]) + "</p>")
         continue
       }
       para.push(formatInlineHtml(trimmed))
@@ -882,7 +1456,7 @@ Item {
       var openCode = codeLines.join("\n")
       blocks.push({ kind: "code", lang: codeLang, raw: openCode, html: highlightCodeHtml(openCode, codeLang), marker: "" })
     }
-    flushPara()
+    flushRich()
     return blocks
   }
 
@@ -919,6 +1493,64 @@ Item {
     if (captureProc.running) return
     captureProc.command = [binPath(), "capture"]
     captureProc.running = true
+  }
+
+  function runCaptureInChat() {
+    if (inChatCaptureProc.running || capturingInChat) return
+    clearHover()
+    capturingInChat = true
+    windowOpen = false
+    inChatCaptureProc.command = [binPath(), "capture-path"]
+    inChatCaptureProc.running = true
+  }
+
+  function attachScreenshotToChat(newPath) {
+    var nextHist = chatHistory.slice()
+    if (answer !== "") {
+      nextHist.push({
+        role: "assistant",
+        text: answer,
+        model: activeTurnModelLabel !== "" ? activeTurnModelLabel : (producerName + " " + modelLabel),
+        handoffFrom: handoffFromLabel,
+        blocks: answerBlocks
+      })
+      answer = ""
+      answerBlocks = []
+    }
+    nextHist.push({
+      role: "screenshot",
+      imagePath: newPath,
+      text: t("newShotAttached"),
+      model: "",
+      handoffFrom: "",
+      blocks: []
+    })
+    chatHistory = nextHist
+    imagePath = newPath
+    marks = []
+    cropNorm = null
+    imageZoom = 1.0
+    errorText = ""
+    pendingNewShot = true
+    saveCurrentSession()
+    Qt.callLater(root.scrollToBottom)
+    Qt.callLater(root.focusField)
+  }
+
+  function onInChatCaptureLine(line) {
+    var text = String(line || "").replace(/\r?\n$/, "")
+    if (text.indexOf("OK\t") === 0) {
+      var newPath = text.substring(3).replace(/^\s+|\s+$/g, "")
+      if (newPath.length > 0) {
+        lastInChatShotPath = newPath
+        capturingInChat = false
+        attachScreenshotToChat(newPath)
+        showWindow()
+        return
+      }
+    }
+    capturingInChat = false
+    showWindow()
   }
 
   function imageContent() {
@@ -988,6 +1620,18 @@ Item {
     markCanvas.requestPaint()
   }
 
+  function undoLastMark() {
+    if (cropNorm !== null) {
+      cropNorm = null
+      markCanvas.requestPaint()
+      return
+    }
+    if (marks.length > 0) {
+      marks = marks.slice(0, marks.length - 1)
+      markCanvas.requestPaint()
+    }
+  }
+
   function applyCrop() {
     if (!cropNorm || !imagePath) return
     var area = imageContent()
@@ -1011,12 +1655,19 @@ Item {
         imagePath = outPath
         marks = []
         cropNorm = null
+        imageZoom = 1.0
         markCanvas.requestPaint()
-        if (autosend) startRead()
+        if (pendingSendAfterCrop) {
+          pendingSendAfterCrop = false
+          sendDraft()
+        } else if (autosend && chatHistory.length === 0 && answer === "") {
+          startRead()
+        }
       }
       return
     }
     if (text.indexOf("ERR\t") === 0) {
+      pendingSendAfterCrop = false
       errorText = text.substring(4)
     }
   }
@@ -1054,7 +1705,7 @@ Item {
   function stripReadMetaLines(text) {
     var lines = String(text || "").split("\n")
     var out = []
-    var re = /^[-*•]?\s*(FORSLAG|SUGGESTION|CATEGORY):/i
+    var re = /^(?:[-*•]|\d+[.)])?\s*\**(FORSLAG|SUGGESTION|CATEGORY)\**:/i
     for (var i = 0; i < lines.length; i++) {
       if (!re.test(lines[i].replace(/^\s+/, ""))) out.push(lines[i])
     }
@@ -1066,6 +1717,18 @@ Item {
   }
 
   function handleEscape() {
+    if (historyDrawerOpen) {
+      historyDrawerOpen = false
+      return
+    }
+    if (modelPickerOpen) {
+      modelPickerOpen = false
+      return
+    }
+    if (fullscreen) {
+      fullscreen = false
+      return
+    }
     if (busy || inflight !== "") {
       stopAsk()
       return
@@ -1109,6 +1772,7 @@ Item {
   function noteShot(path) {
     var file = String(path || "").replace(/\s+$/g, "")
     if (file.length === 0 || !/\.(png|jpe?g|webp)$/i.test(file)) return
+    if (capturingInChat || file === lastInChatShotPath) return
     if (windowOpen && file === imagePath) {
       refreshShot()
       return
@@ -1133,6 +1797,7 @@ Item {
     var obj
     try { obj = JSON.parse(String(raw || "{}")) } catch (e) { return }
     if (obj.omarchy) omarchyAgent = String(obj.omarchy)
+    if (obj.sysLang) sysLang = String(obj.sysLang)
     visionWhy = obj.why ? String(obj.why) : ""
     if (!userPickedModel && obj.provider && obj.model) {
       provider = String(obj.provider)
@@ -1203,21 +1868,32 @@ Item {
       "--provider", provider,
       "--model", model,
       "--mode", mode,
-      "--lang", activeLang,
+      "--lang", (lang === "auto" ? "auto" : activeLang),
       "--image", image
     ]
     if (marks.length > 0) {
       cmd.push("--marks")
       cmd.push(JSON.stringify(marks))
     }
-    if (showReason) cmd.push("--reason")
+    if (showReason && !systemDebug) cmd.push("--reason")
     if (systemDebug) cmd.push("--sysdebug")
+    if (agentMemory) cmd.push("--agent-memory")
+    else cmd.push("--no-agent-memory")
+    if (customContext && customContext.replace(/^\s+|\s+$/g, "").length > 0) {
+      cmd.push("--context")
+      cmd.push(customContext)
+    }
+    if (contextFile && contextFile.replace(/^\s+|\s+$/g, "").length > 0) {
+      cmd.push("--context-file")
+      cmd.push(contextFile)
+    }
     if (follow && String(follow).length > 0) {
       cmd.push("--follow")
       cmd.push(String(follow))
       cmd.push("--prior")
-      cmd.push(String(prior || "").substring(0, 1500))
+      cmd.push(String(prior || "").substring(0, 14000))
     }
+    activeTurnModelLabel = producerName + " " + modelLabel
     var job = { cmd: cmd, gen: gen, mode: mode }
     if (askProc.running) {
       askStop = true
@@ -1237,11 +1913,67 @@ Item {
 
   function sendDraft() {
     var question = String(draft || "").replace(/^\s+|\s+$/g, "")
+    if (question.length === 0 && pendingNewShot) {
+      question = t("newShotPrompt")
+    }
     if (question.length === 0 || !imagePath) return
+    // If user drew a Crop box and pressed Send before clicking Apply Crop, apply it automatically first
+    if (cropNorm !== null && !cropProc.running) {
+      pendingSendAfterCrop = true
+      applyCrop()
+      return
+    }
+    pendingSendAfterCrop = false
+    pendingNewShot = false
     userTyped = true
     draft = ""
     hasUnreadAnswer = false
-    launch("user", question, note, "")
+    compactChatMode = false
+
+    // Push prior assistant answer & new user message into multi-turn chat thread
+    var nextHist = chatHistory.slice()
+    if (answer !== "") {
+      nextHist.push({
+        role: "assistant",
+        text: answer,
+        model: activeTurnModelLabel !== "" ? activeTurnModelLabel : (producerName + " " + modelLabel),
+        handoffFrom: handoffFromLabel,
+        blocks: answerBlocks
+      })
+    }
+    nextHist.push({
+      role: "user",
+      text: question,
+      model: "",
+      handoffFrom: "",
+      blocks: []
+    })
+    chatHistory = nextHist
+
+    // Fast Turn 1 -> Specialist Turn 2+ automatic handoff
+    if (autoDelegate && nextHist.length >= 2) {
+      var targetCat = classifyFollowup(question, detectedCategory)
+      var spec = bestSpecialistFor(targetCat)
+      if (spec && spec.id !== model) {
+        handoffFromLabel = producerName + " " + modelLabel
+        provider = spec.provider
+        model = spec.id
+        recommendedModelIdx = -1
+        recommendedCategory = ""
+      } else {
+        handoffFromLabel = ""
+      }
+    } else {
+      handoffFromLabel = ""
+    }
+
+    var priorContext = buildPriorTranscript()
+    if (priorContext === "" && note !== "") priorContext = note
+    launch("user", question, priorContext, "")
+    Qt.callLater(function() {
+      if (middleScroll.contentHeight > middleScroll.height)
+        middleScroll.contentY = Math.max(0, middleScroll.contentHeight - middleScroll.height)
+    })
     if (minimizeOnSend) {
       minimizeToBackground()
     }
@@ -1282,10 +2014,11 @@ Item {
           streamRaw += chunk
           var liveParts = splitReason(streamRaw)
           if (liveParts.reason !== "") reasoning = liveParts.reason
-          var liveBody = inflight === "read" ? stripReadMetaLines(liveParts.body) : liveParts.body
-          if (liveBody !== "" && (inflight !== "read" || (!userTyped && (autosend || silentRun || backgroundRun)))) {
+          var liveBody = stripReadMetaLines(liveParts.body)
+          if (liveBody !== "" && (inflight !== "read" || (!userTyped && (autosend || minimalMode || silentRun || backgroundRun)))) {
             answerFade = 1
             answer = liveBody
+            Qt.callLater(root.scrollToBottom)
           }
         }
       } catch (e) {}
@@ -1306,7 +2039,9 @@ Item {
       streamStep = ""
       errorText = errMsg
       if (silentRun && !windowOpen) {
-        sendDesktopNotification("⚠ Aeye", errMsg)
+        stealthPopupAnswer = errMsg
+        stealthPopupError = true
+        stealthPopupOpen = true
         silentRun = false
       } else if (backgroundRun && !windowOpen) {
         sendErrorNotification(errMsg)
@@ -1349,22 +2084,27 @@ Item {
     var cleanLines = []
     var extracted = []
     var detectedCat = ""
-    var re = /^[-*•]?\s*(FORSLAG|SUGGESTION):\s*/i
-    var catRe = /^[-*•]?\s*CATEGORY:\s*([a-zA-Z]+)/i
+    var re = /^(?:[-*•]|\d+[.)])?\s*\**(FORSLAG|SUGGESTION)\**:\**\s*/i
+    var catRe = /^(?:[-*•]|\d+[.)])?\s*\**CATEGORY\**:\**\s*([a-zA-Z]+)/i
     for (var i = 0; i < lines.length; i++) {
       var l = lines[i].replace(/^\s+|\s+$/g, "")
       var cm = l.match(catRe)
       if (cm) {
         detectedCat = String(cm[1] || "").toLowerCase()
       } else if (re.test(l)) {
-        var q = l.replace(re, "").replace(/^\s+|\s+$/g, "")
+        var q = l.replace(re, "").replace(/^\*+|\*+$/g, "").replace(/^\s+|\s+$/g, "")
         if (q.length > 0 && extracted.indexOf(q) < 0) extracted.push(q)
       } else {
         cleanLines.push(lines[i])
       }
     }
-    aiPrompts = extracted
-    computeRecommendedModel(detectedCat)
+    if (extracted.length > 0 || answerMode === "read") aiPrompts = extracted
+    if (detectedCat !== "") detectedCategory = detectedCat
+    if (!autoDelegate && detectedCat !== "") computeRecommendedModel(detectedCat)
+    else if (autoDelegate) {
+      recommendedModelIdx = -1
+      recommendedCategory = ""
+    }
     return cleanLines.join("\n").replace(/^\s+|\s+$/g, "")
   }
 
@@ -1380,30 +2120,44 @@ Item {
       busy = false
       inflight = ""
       answerMode = ""
-      if (!userTyped && (autosend || silentRun || backgroundRun)) {
+      if (!userTyped && (autosend || minimalMode || silentRun || backgroundRun)) {
         answer = note
+        if (windowOpen && answer !== "") {
+          streamParseTimer.stop()
+          answerBlocks = parseMarkdownBlocks(answer)
+        }
       }
-      if (silentRun && !windowOpen && note !== "") {
+      if (minimalMode && note !== "") {
         if (copyProc.running) copyProc.running = false
         copyProc.command = [binPath(), "copy", note]
         copyProc.running = true
-        sendDesktopNotification(
-          "✦ Aeye (" + producerName + " " + modelLabel + ")",
-          note
-        )
-        silentRun = false
-      } else if (backgroundRun && !windowOpen && note !== "") {
+        // Smoothly expand compact window if initial answer is long or contains code
+        if (note.length > 520 || note.indexOf("```") >= 0 || note.split("\n").length > 8) {
+          compactChatMode = false
+        }
+      }
+      saveCurrentSession()
+      if (backgroundRun && !windowOpen && note !== "") {
         hasUnreadAnswer = true
         backgroundRun = false
         sendReadyNotification(note)
       }
       return
     }
+    var rawFollowBody = bodyOnly !== "" ? bodyOnly : text
+    var cleanedFollowBody = parseReadSuggestions(rawFollowBody)
     answerFade = 1
-    answer = bodyOnly !== "" ? bodyOnly : text
     busy = false
     errorText = ""
     inflight = ""
+    answerMode = ""
+    answer = cleanedFollowBody !== "" ? cleanedFollowBody : rawFollowBody
+    if (windowOpen && answer !== "") {
+      streamParseTimer.stop()
+      answerBlocks = parseMarkdownBlocks(answer)
+    }
+    saveCurrentSession()
+    Qt.callLater(root.scrollToBottom)
     if (backgroundRun && !windowOpen) {
       hasUnreadAnswer = true
       backgroundRun = false
@@ -1428,7 +2182,9 @@ Item {
     }
     if (!gotAnswerPath) {
       if (silentRun && !windowOpen) {
-        sendDesktopNotification("⚠ Aeye", t("noResponse"))
+        stealthPopupAnswer = t("noResponse")
+        stealthPopupError = true
+        stealthPopupOpen = true
         silentRun = false
         busy = false
         inflight = ""
@@ -1456,6 +2212,10 @@ Item {
         if (payload.forceOpen === true) forceWindow = true
       } catch (e) {}
     }
+    if (imagePath !== "" && (answer !== "" || chatHistory.length > 0)) {
+      saveCurrentSession()
+    }
+    currentSessionId = String((new Date()).getTime())
     imagePath = given
     draft = ""
     answer = ""
@@ -1470,16 +2230,33 @@ Item {
     hasUnreadAnswer = false
     marks = []
     cropNorm = null
+    imageZoom = 1.0
+    customPreviewHeight = -1
+    modelPickerOpen = false
+    historyDrawerOpen = false
+    chatHistory = []
+    detectedCategory = ""
+    handoffFromLabel = ""
+    activeTurnModelLabel = producerName + " " + modelLabel
     aiPrompts = []
     recommendedModelIdx = -1
     recommendedCategory = ""
-    if (given.length > 0) previewOpen = true
+    stealthPopupOpen = false
+    silentRun = false
+    pendingNewShot = false
+    pendingSendAfterCrop = false
+    selectedTurns = []
+    copiedTurnIdx = -1
+    copiedChatFeedback = false
 
-    if (minimalMode && !forceWindow && given.length > 0) {
-      silentRun = true
-      windowOpen = false
+    if (autosend && !forceWindow && given.length > 0) {
+      compactChatMode = true
+      previewOpen = false
+      showWindow()
       startRead()
     } else {
+      compactChatMode = false
+      if (given.length > 0) previewOpen = true
       showWindow()
       if (imagePath.length > 0 && autosend) {
         startRead()
@@ -1576,8 +2353,21 @@ Item {
     id: configFile
     path: Quickshell.env("HOME") + "/.config/omarchy/aeye.json"
     watchChanges: true
-    onFileChanged: reload()
-    onLoaded: root.applyConfig(text())
+    onFileChanged: {
+      if (root.suppressConfigReload || configProc.running || configProc.queue.length > 0) return
+      reload()
+    }
+    onLoaded: {
+      if (root.suppressConfigReload || configProc.running || configProc.queue.length > 0) return
+      root.applyConfig(text())
+    }
+  }
+
+  Timer {
+    id: configReloadCooldown
+    interval: 500
+    repeat: false
+    onTriggered: root.suppressConfigReload = false
   }
 
   FileView {
@@ -1589,7 +2379,10 @@ Item {
     id: configProc
     property var queue: []
     onExited: {
-      if (queue.length === 0) return
+      if (queue.length === 0) {
+        configReloadCooldown.restart()
+        return
+      }
       var next = queue[0]
       queue = queue.slice(1)
       command = next
@@ -1623,6 +2416,8 @@ Item {
     onTriggered: {
       root.copiedFeedback = false
       root.copiedBlockIdx = -1
+      root.copiedTurnIdx = -1
+      root.copiedChatFeedback = false
     }
   }
 
@@ -1664,6 +2459,12 @@ Item {
   }
 
   Process {
+    id: modelsProc
+    stdout: StdioCollector { onStreamFinished: root.applyAvailableModels(text) }
+    onExited: root.loadingModels = false
+  }
+
+  Process {
     id: keySetProc
     onExited: root.loadProviders()
   }
@@ -1677,6 +2478,16 @@ Item {
   Process { id: copyProc }
   Process { id: notifyProc }
   Process { id: captureProc }
+  Process {
+    id: inChatCaptureProc
+    stdout: SplitParser { onRead: function(line) { root.onInChatCaptureLine(line) } }
+    onExited: {
+      if (root.capturingInChat) {
+        root.capturingInChat = false
+        root.showWindow()
+      }
+    }
+  }
 
   Timer {
     id: saveResetTimer
@@ -1699,6 +2510,11 @@ Item {
     stdout: SplitParser { onRead: function(line) { root.onCropLine(line) } }
   }
 
+  Process {
+    id: contextToolProc
+    stdout: SplitParser { onRead: function(line) { root.onContextToolLine(line) } }
+  }
+
   // Live reactive sync to shared Service.qml for BarWidget.qml
   Binding { target: root.service; property: "stage"; value: root.stage; when: root.service !== null }
   Binding { target: root.service; property: "paused"; value: root.paused; when: root.service !== null }
@@ -1717,13 +2533,22 @@ Item {
   Binding { target: root.service; property: "minimalMode"; value: root.minimalMode; when: root.service !== null }
   Binding { target: root.service; property: "showReason"; value: root.showReason; when: root.service !== null }
   Binding { target: root.service; property: "systemDebug"; value: root.systemDebug; when: root.service !== null }
+  Binding { target: root.service; property: "agentMemory"; value: root.agentMemory; when: root.service !== null }
+  Binding { target: root.service; property: "autoDelegate"; value: root.autoDelegate; when: root.service !== null }
   Binding { target: root.service; property: "lastSaveDir"; value: root.lastSaveDir; when: root.service !== null }
   Binding { target: root.service; property: "lang"; value: root.lang; when: root.service !== null }
   Binding { target: root.service; property: "activeLang"; value: root.activeLang; when: root.service !== null }
   Binding { target: root.service; property: "localeDisplayLabel"; value: root.localeDisplayLabel; when: root.service !== null }
   Binding { target: root.service; property: "hudPlacement"; value: root.hudPlacement; when: root.service !== null }
   Binding { target: root.service; property: "customPrompts"; value: root.customPrompts; when: root.service !== null }
+  Binding { target: root.service; property: "customModels"; value: root.customModels; when: root.service !== null }
   Binding { target: root.service; property: "providerStatuses"; value: root.providerStatuses; when: root.service !== null }
+  Binding { target: root.service; property: "availableModels"; value: root.availableModels; when: root.service !== null }
+  Binding { target: root.service; property: "loadingModels"; value: root.loadingModels; when: root.service !== null }
+  Binding { target: root.service; property: "customContext"; value: root.customContext; when: root.service !== null }
+  Binding { target: root.service; property: "contextFile"; value: root.contextFile; when: root.service !== null }
+  Binding { target: root.service; property: "providerAuthMode"; value: root.providerAuthMode; when: root.service !== null }
+  Binding { target: root.service; property: "modelAuthMode"; value: root.modelAuthMode; when: root.service !== null }
   Binding { target: root.service; property: "colAnalysing"; value: root.colAnalysing; when: root.service !== null }
   Binding { target: root.service; property: "colSuccess"; value: root.colSuccess; when: root.service !== null }
 
@@ -1734,17 +2559,28 @@ Item {
     function onPauseToggleRequested() { root.togglePause() }
     function onStopAskRequested() { root.stopAsk() }
     function onPickModelRequested(index) { root.pickModelAt(index) }
+    function onAddCustomModelRequested(vendorKey, modelId, label) { root.addCustomModel(vendorKey, modelId, label) }
+    function onRemoveCustomModelRequested(modelId) { root.removeCustomModel(modelId) }
     function onSetAutosendRequested(on) { root.pickAutosend(on) }
     function onSetMinimizeOnSendRequested(on) { root.pickMinimizeOnSend(on) }
     function onSetMinimalModeRequested(on) { root.pickMinimalMode(on) }
     function onSetShowReasonRequested(on) { root.pickShowReason(on) }
     function onSetSystemDebugRequested(on) { root.pickSystemDebug(on) }
+    function onSetAgentMemoryRequested(on) { root.pickAgentMemory(on) }
+    function onSetAutoDelegateRequested(on) { root.pickAutoDelegate(on) }
     function onCycleLocaleRequested(dir) { root.cycleLocale(dir) }
     function onSetHudPlacementRequested(placement) { root.pickHudPlacement(placement) }
     function onAddCustomPromptRequested(phrase) { root.addCustomPromptText(phrase) }
     function onRemoveCustomPromptRequested(phrase) { root.removeCustomPrompt(phrase) }
+    function onSetCustomContextRequested(text) { root.setCustomContext(text) }
+    function onSetContextFileRequested(path) { root.setContextFile(path) }
+    function onEditContextFileRequested(path) { root.editContextFile(path) }
+    function onPickContextFileRequested() { root.pickContextFile() }
     function onRefreshProvidersRequested() { root.loadProviders() }
+    function onRefreshAvailableModelsRequested(force) { root.loadAvailableModels(force) }
     function onSetApiKeyRequested(vendor, apiKey) { root.setApiKey(vendor, apiKey) }
+    function onSetProviderAuthModeRequested(vendor, mode) { root.setProviderAuthMode(vendor, mode) }
+    function onSetModelAuthModeRequested(modelId, mode) { root.setModelAuthMode(modelId, mode) }
   }
 
   component PlainText: Text {
@@ -1762,36 +2598,37 @@ Item {
     property color customColor: Color.accent
     signal pressed()
 
-    width: btnRow.implicitWidth + Style.space(18)
-    height: Style.space(30)
-    radius: Style.space(8)
+    readonly property bool iconOnly: label === "" && icon !== ""
+    width: iconOnly ? Style.space(24) : (btnRow.implicitWidth + Style.space(10))
+    height: Style.space(24)
+    radius: Style.space(6)
     color: {
-      if (danger && btnMouse.containsMouse) return Util.alpha(Color.urgent, 0.22)
-      if (accent) return btnMouse.containsMouse ? Util.alpha(customColor, 0.32) : Util.alpha(customColor, 0.2)
-      if (active) return Util.alpha(customColor, 0.18)
-      return btnMouse.containsMouse ? root.surfaceHover : root.surface
+      if (danger && btnMouse.containsMouse) return Util.alpha(Color.urgent, 0.20)
+      if (accent) return btnMouse.containsMouse ? Util.alpha(customColor, 0.28) : Util.alpha(customColor, 0.18)
+      if (active) return Util.alpha(customColor, 0.15)
+      return btnMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025)
     }
     border.width: 1
     border.color: {
       if (danger && btnMouse.containsMouse) return Color.urgent
-      if (accent || active) return customColor
-      return btnMouse.containsMouse ? Util.alpha(root.fg, 0.28) : root.line
+      if (accent || active) return Util.alpha(customColor, 0.65)
+      return btnMouse.containsMouse ? Util.alpha(root.fg, 0.22) : Util.alpha(root.fg, 0.08)
     }
 
-    Behavior on color { ColorAnimation { duration: Style.duration(130) } }
-    Behavior on border.color { ColorAnimation { duration: Style.duration(130) } }
+    Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+    Behavior on border.color { ColorAnimation { duration: Style.duration(120) } }
 
     Row {
       id: btnRow
       anchors.centerIn: parent
-      spacing: Style.space(5)
+      spacing: Style.space(4)
       PlainText {
         visible: navBtn.icon !== ""
         anchors.verticalCenter: parent.verticalCenter
         text: navBtn.icon
         color: navBtn.danger && btnMouse.containsMouse ? Color.urgent : (navBtn.accent || navBtn.active ? navBtn.customColor : root.fg)
         font.family: root.face
-        font.pixelSize: Style.font.caption
+        font.pixelSize: navBtn.iconOnly ? Math.round(Style.font.body * 1.15) : Style.font.caption
       }
       PlainText {
         visible: navBtn.label !== ""
@@ -1824,14 +2661,14 @@ Item {
     visible: root.windowOpen && !root.remapping
     anchors.top: true
     anchors.bottom: true
-    anchors.left: !root.isDocked || root.hudPlacement === "dock-left"
-    anchors.right: !root.isDocked || root.hudPlacement === "dock-right"
-    implicitWidth: root.isDocked ? Style.space(460) : 0
+    anchors.left: !root.effectiveDocked || root.hudPlacement === "dock-left"
+    anchors.right: !root.effectiveDocked || root.hudPlacement === "dock-right"
+    implicitWidth: root.effectiveDocked ? Style.space(460) : 0
     color: "transparent"
-    // In dock-left/dock-right mode, ExclusionMode.Normal + explicit exclusiveZone
+    // In dock-left/dock-right mode (when not fullscreen), ExclusionMode.Normal + explicit exclusiveZone
     // reserves exact space inside Hyprland's tiling layout so windows tile cleanly alongside Aeye.
-    exclusionMode: root.windowOpen && root.isDocked ? ExclusionMode.Normal : ExclusionMode.Ignore
-    exclusiveZone: root.windowOpen && root.isDocked ? win.implicitWidth : 0
+    exclusionMode: root.windowOpen && root.effectiveDocked ? ExclusionMode.Normal : ExclusionMode.Ignore
+    exclusiveZone: root.windowOpen && root.effectiveDocked ? win.implicitWidth : 0
     WlrLayershell.namespace: "aeye"
     WlrLayershell.layer: WlrLayer.Top
     // Brief Exclusive prime on open for instant typing, then OnDemand so clicks
@@ -1844,7 +2681,7 @@ Item {
       id: cardInputMask
       item: root.windowOpen ? mainCard : null
     }
-    mask: root.isDocked || root.dragging ? null : cardInputMask
+    mask: root.effectiveDocked || root.dragging || root.fullscreen ? null : cardInputMask
 
     FocusScope {
       id: winRoot
@@ -1858,63 +2695,43 @@ Item {
         readonly property real padEdge: Style.space(12)
         readonly property real floatingContentHeight: topSection.implicitHeight + Style.space(12) + middleCol.implicitHeight + (!root.editing ? Style.space(12) + bottomSection.implicitHeight : 0) + root.pad * 2
         width: {
-          if (root.isDocked) return Math.max(Style.space(320), winRoot.width - Style.space(12))
+          if (root.fullscreen) return Math.max(Style.space(480), winRoot.width - Style.space(24))
+          if (root.effectiveDocked) return Math.max(Style.space(320), winRoot.width - Style.space(12))
           if (root.editing) return Math.min(winRoot.width - Style.space(32), 420)
+          if (root.compactChatMode) return Math.min(winRoot.width - Style.space(32), Math.max(520, headerNeededWidth))
           if (root.hudPlacement === "corner") return Math.min(winRoot.width - Style.space(32), Math.max(660, headerNeededWidth))
-          return Math.min(winRoot.width - Style.space(32), Math.max(840, headerNeededWidth))
+          return Math.min(winRoot.width - Style.space(32), Math.max(820, headerNeededWidth))
         }
         height: {
-          if (root.isDocked) return Math.max(Style.space(240), winRoot.height - Style.space(12))
+          if (root.fullscreen) return Math.max(Style.space(360), winRoot.height - Style.space(56))
+          if (root.effectiveDocked) return Math.max(Style.space(240), winRoot.height - Style.space(12))
           return Math.min(winRoot.height - Style.space(64), floatingContentHeight)
         }
         x: {
-          if (root.isDocked) return Style.space(6)
+          if (root.fullscreen) return Style.space(12)
+          if (root.effectiveDocked) return Style.space(6)
           if (root.hasCustomPos) return Math.max(Style.space(8), Math.min(winRoot.width - width - Style.space(8), root.customX))
-          if (root.hudPlacement === "corner") return Math.max(Style.space(8), winRoot.width - width - padEdge)
+          if (root.hudPlacement === "corner" || root.compactChatMode) return Math.max(Style.space(8), winRoot.width - width - padEdge)
           return Math.max(Style.space(8), (winRoot.width - width) / 2)
         }
         y: {
-          if (root.isDocked) return Style.space(6)
+          if (root.fullscreen) return Style.space(44)
+          if (root.effectiveDocked) return Style.space(6)
           if (root.hasCustomPos) return Math.max(Style.space(44), Math.min(winRoot.height - height - Style.space(8), root.customY))
           if (root.hudPlacement === "top") return Style.space(48)
           return Math.max(Style.space(44), winRoot.height - height - padEdge)
         }
         radius: root.radius
         color: Util.alpha(root.bg, 0.96)
-        border.width: root.stage === "analysing" ? 1.5 : 1
-        border.color: root.stage === "analysing" ? root.colAnalysing : (root.stage === "viewed" ? Util.alpha(root.colSuccess, 0.5) : root.line)
+        border.width: 1
+        border.color: root.stage === "analysing" ? Util.alpha(Color.accent, 0.45) : root.line
         clip: true
 
-        Behavior on width { enabled: !root.dragging && !root.isDocked; NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
-        Behavior on height { enabled: !root.dragging && !root.isDocked; NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
+        Behavior on width { enabled: !root.dragging && !root.effectiveDocked; NumberAnimation { duration: Style.duration(220); easing.type: Easing.OutCubic } }
+        Behavior on height { enabled: !root.dragging && !root.effectiveDocked; NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
         Behavior on border.color { ColorAnimation { duration: Style.duration(220) } }
 
-        Rectangle {
-          id: topAccentBar
-          anchors.top: parent.top
-          anchors.left: parent.left
-          anchors.right: parent.right
-          height: root.stage === "analysing" ? Style.space(4) : Style.space(2)
-          color: root.stage === "analysing" ? Util.alpha(root.colAnalysing, 0.2) : (root.stage === "viewed" ? Util.alpha(root.colSuccess, 0.55) : Util.alpha(Color.accent, 0.3))
-
-          Rectangle {
-            id: pulseRunner
-            visible: root.stage === "analysing"
-            width: parent.width * 0.42
-            height: parent.height
-            radius: height / 2
-            color: root.colAnalysing
-            x: -width
-            SequentialAnimation on x {
-              running: pulseRunner.visible && !root.paused && Style.duration(100) > 0
-              loops: Animation.Infinite
-              NumberAnimation { from: -pulseRunner.width; to: topAccentBar.width; duration: Style.duration(950); easing.type: Easing.InOutSine }
-              NumberAnimation { from: topAccentBar.width; to: -pulseRunner.width; duration: Style.duration(950); easing.type: Easing.InOutSine }
-            }
-          }
-        }
-
-        // TOP SECTION (Header bar + Editing mode)
+        // TOP SECTION (Minimal logo-free header bar + inline pickers/drawers)
         Column {
           id: topSection
           anchors.left: parent.left
@@ -1925,18 +2742,18 @@ Item {
           anchors.topMargin: root.pad
           spacing: Style.space(10)
 
-          // 1. HEADER BAR (draggable when floating; 2-row compact layout when Hyprland-docked)
+          // 1. HEADER BAR (Always single-line: Active Model on left, Image/Edit & Window Controls on right)
           Item {
             id: headerBar
             visible: !root.editing
             width: parent.width
-            height: root.isDocked ? Style.space(70) : Style.space(34)
+            height: Style.space(28)
 
             // Drag handle across header empty space when floating
             MouseArea {
               id: dragArea
               anchors.fill: parent
-              enabled: !root.isDocked
+              enabled: !root.effectiveDocked && !root.fullscreen
               hoverEnabled: true
               cursorShape: root.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
               property real pressWinX: 0
@@ -1973,199 +2790,56 @@ Item {
             Row {
               id: leftHeaderRow
               anchors.left: parent.left
-              y: root.isDocked ? 0 : Math.round((parent.height - height) / 2)
-              spacing: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
 
               PlainText {
-                visible: !root.isDocked
+                visible: !root.effectiveDocked
                 anchors.verticalCenter: parent.verticalCenter
                 text: "⠿"
-                color: dragArea.containsMouse || root.dragging ? Color.accent : Util.alpha(root.fg, 0.35)
+                color: dragArea.containsMouse || root.dragging ? Color.accent : root.dim
                 font.family: root.face
                 font.pixelSize: Style.font.caption
               }
 
-              // Theme-native orb wordmark (orb + Aeye)
-              Item {
-                anchors.verticalCenter: parent.verticalCenter
-                width: hudWmRow.implicitWidth
-                height: Style.space(28)
-
-                Row {
-                  id: hudWmRow
-                  anchors.left: parent.left
-                  anchors.top: parent.top
-                  spacing: Style.space(4)
-
-                  Canvas {
-                    id: hudAEyeLogo
-                    width: Style.space(22)
-                    height: Style.space(22)
-                    anchors.verticalCenter: parent.verticalCenter
-                    property color colA: Color.accent
-                    property color colEye: root.fg
-                    property color colSpark: root.colAnalysing
-                    onColAChanged: requestPaint()
-                    onColEyeChanged: requestPaint()
-                    onColSparkChanged: requestPaint()
-                    onPaint: {
-                      var ctx = getContext("2d")
-                      ctx.clearRect(0, 0, width, height)
-                      var s = width / 100.0
-                      ctx.save()
-                      ctx.scale(s, s)
-                      // glass orb
-                      var g = ctx.createRadialGradient(40, 36, 4, 50, 50, 46)
-                      g.addColorStop(0, Qt.lighter(colA, 1.5)); g.addColorStop(0.6, colA); g.addColorStop(1, Qt.darker(colA, 1.9))
-                      ctx.fillStyle = g
-                      ctx.beginPath(); ctx.arc(50, 50, 44, 0, Math.PI * 2); ctx.fill()
-                      // almond lens
-                      ctx.fillStyle = Qt.rgba(1, 1, 1, 0.16)
-                      ctx.strokeStyle = Qt.rgba(1, 1, 1, 0.45)
-                      ctx.lineWidth = 1.6
-                      ctx.beginPath()
-                      ctx.moveTo(6, 50)
-                      ctx.bezierCurveTo(22, 28, 36, 22, 50, 22)
-                      ctx.bezierCurveTo(64, 22, 78, 28, 94, 50)
-                      ctx.bezierCurveTo(78, 72, 64, 78, 50, 78)
-                      ctx.bezierCurveTo(36, 78, 22, 72, 6, 50)
-                      ctx.closePath(); ctx.fill(); ctx.stroke()
-                      // iris + pupil
-                      ctx.fillStyle = colSpark
-                      ctx.beginPath(); ctx.arc(50, 50, 25, 0, Math.PI * 2); ctx.fill()
-                      ctx.fillStyle = Qt.rgba(0.02, 0.04, 0.1, 0.92)
-                      ctx.beginPath(); ctx.arc(50, 50, 14, 0, Math.PI * 2); ctx.fill()
-                      // spark
-                      ctx.fillStyle = Qt.rgba(1, 1, 1, 1)
-                      ctx.beginPath()
-                      ctx.moveTo(50, 37); ctx.lineTo(53, 47); ctx.lineTo(63, 50); ctx.lineTo(53, 53)
-                      ctx.lineTo(50, 63); ctx.lineTo(47, 53); ctx.lineTo(37, 50); ctx.lineTo(47, 47)
-                      ctx.closePath(); ctx.fill()
-                      ctx.restore()
-                    }
-                  }
-
-
-                  PlainText {
-                    id: hudEyeWord
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Aeye"
-                    color: root.fg
-                    font.family: root.face
-                    font.pixelSize: Math.round(Style.font.body * 1.15)
-                    font.bold: true
-                    font.letterSpacing: 0.4
-                  }
-                }
-
-                Rectangle {
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(2)
-                  anchors.bottom: parent.bottom
-                  width: hudWmRow.implicitWidth - Style.space(2)
-                  height: 2
-                  radius: 1
-                  color: Util.alpha(Color.accent, 0.55)
-                }
-              }
-
-              // Status Pill
-              Rectangle {
-                id: statusPill
-                anchors.verticalCenter: parent.verticalCenter
-                width: statusRow.implicitWidth + Style.space(18)
-                height: Style.space(26)
-                radius: height / 2
-                color: Util.alpha(root.stageColor, root.stage === "analysing" ? 0.22 : 0.14)
-                border.width: 1.2
-                border.color: root.stageColor
-
-                Row {
-                  id: statusRow
-                  anchors.centerIn: parent
-                  spacing: Style.space(6)
-
-                  Item {
-                    width: Style.space(8)
-                    height: Style.space(8)
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    Rectangle {
-                      id: pulseHalo
-                      anchors.centerIn: parent
-                      width: parent.width
-                      height: parent.height
-                      radius: width / 2
-                      color: root.stageColor
-                      visible: root.stage === "analysing" && !root.paused
-                      SequentialAnimation on scale {
-                        running: pulseHalo.visible && Style.duration(100) > 0
-                        loops: Animation.Infinite
-                        NumberAnimation { from: 1.0; to: 2.2; duration: Style.duration(750); easing.type: Easing.OutQuad }
-                        NumberAnimation { from: 2.2; to: 1.0; duration: 0 }
-                      }
-                      SequentialAnimation on opacity {
-                        running: pulseHalo.visible && Style.duration(100) > 0
-                        loops: Animation.Infinite
-                        NumberAnimation { from: 0.8; to: 0.0; duration: Style.duration(750); easing.type: Easing.OutQuad }
-                        NumberAnimation { from: 0.0; to: 0.8; duration: 0 }
-                      }
-                    }
-
-                    Rectangle {
-                      anchors.centerIn: parent
-                      width: Style.space(6)
-                      height: Style.space(6)
-                      radius: width / 2
-                      color: root.stageColor
-                    }
-                  }
-
-                  PlainText {
-                    text: root.stageLabel
-                    color: root.stageColor
-                    font.family: root.face
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                  }
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  acceptedButtons: Qt.NoButton
-                  onContainsMouseChanged: root.setHover(statusPill, containsMouse, root.stageTip)
-                }
-              }
-
-              // Model Selector Pill (quick cycle; full settings live in top-bar popout)
+              // Sleek Model Selector Button (tight 24px box, 6px corners, subtle 8% border, no ✦ icon)
               Rectangle {
                 id: modelPill
                 anchors.verticalCenter: parent.verticalCenter
-                width: modelBadgeRow.implicitWidth + Style.space(14)
-                height: Style.space(26)
-                radius: height / 2
-                color: modelBadgeMouse.containsMouse ? root.surfaceHover : root.surface
+                width: modelBadgeRow.implicitWidth + Style.space(10)
+                height: Style.space(24)
+                radius: Style.space(6)
+                color: modelBadgeMouse.containsMouse || root.modelPickerOpen ? root.surfaceHover : Util.alpha(root.fg, 0.025)
                 border.width: 1
-                border.color: modelBadgeMouse.containsMouse ? Color.accent : root.line
+                border.color: modelBadgeMouse.containsMouse || root.modelPickerOpen ? Color.accent : Util.alpha(root.fg, 0.08)
 
                 Row {
                   id: modelBadgeRow
                   anchors.centerIn: parent
                   spacing: Style.space(5)
 
-                  PlainText {
-                    text: "✦"
+                  Rectangle {
+                    visible: root.stage === "analysing"
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(5)
+                    height: Style.space(5)
+                    radius: width / 2
                     color: Color.accent
-                    font.family: root.face
-                    font.pixelSize: Style.font.caption
+                    SequentialAnimation on opacity {
+                      running: root.stage === "analysing" && !root.paused && Style.duration(100) > 0
+                      loops: Animation.Infinite
+                      NumberAnimation { from: 1.0; to: 0.35; duration: Style.duration(650); easing.type: Easing.InOutSine }
+                      NumberAnimation { from: 0.35; to: 1.0; duration: Style.duration(650); easing.type: Easing.InOutSine }
+                    }
                   }
 
                   PlainText {
-                    text: root.producerName + " · " + root.modelLabel
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.producerName + " · " + root.modelLabel + " ▾"
                     color: root.fg
                     font.family: root.face
                     font.pixelSize: Style.font.caption
+                    font.bold: true
                   }
                 }
 
@@ -2174,10 +2848,37 @@ Item {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
+                  acceptedButtons: Qt.LeftButton | Qt.RightButton
                   onContainsMouseChanged: root.setHover(modelPill, containsMouse, root.t("tipModelPill"))
-                  onClicked: {
+                  onClicked: function(mouse) {
                     root.tooltipShown = false
-                    root.cycleActiveModel()
+                    if (mouse.button === Qt.RightButton) root.cycleActiveModel()
+                    else root.modelPickerOpen = !root.modelPickerOpen
+                  }
+                }
+              }
+
+              // Subtle Handoff Badge when Turn 2 automatically delegated to a specialist AI (shown in header when floating/fullscreen)
+              Rectangle {
+                visible: root.handoffFromLabel !== "" && !root.effectiveDocked
+                anchors.verticalCenter: parent.verticalCenter
+                width: visible ? handoffRow.implicitWidth + Style.space(10) : 0
+                height: Style.space(24)
+                radius: Style.space(6)
+                color: Util.alpha(Color.accent, 0.10)
+                border.width: 1
+                border.color: Util.alpha(Color.accent, 0.35)
+
+                Row {
+                  id: handoffRow
+                  anchors.centerIn: parent
+                  spacing: Style.space(4)
+                  PlainText {
+                    text: root.t("handoffFrom") + " " + root.handoffFromLabel
+                    color: Color.accent
+                    font.family: root.face
+                    font.pixelSize: Math.max(9, Style.font.caption - 1)
+                    font.bold: true
                   }
                 }
               }
@@ -2187,12 +2888,12 @@ Item {
                 id: sysDebugPill
                 visible: root.systemDebug
                 anchors.verticalCenter: parent.verticalCenter
-                width: visible ? sysDebugRow.implicitWidth + Style.space(14) : 0
-                height: Style.space(26)
-                radius: height / 2
-                color: sysDebugMouse.containsMouse ? Util.alpha(Color.urgent, 0.25) : Util.alpha(Color.urgent, 0.14)
+                width: visible ? sysDebugRow.implicitWidth + Style.space(10) : 0
+                height: Style.space(24)
+                radius: Style.space(6)
+                color: sysDebugMouse.containsMouse ? Util.alpha(Color.urgent, 0.22) : Util.alpha(Color.urgent, 0.12)
                 border.width: 1
-                border.color: Util.alpha(Color.urgent, 0.75)
+                border.color: Util.alpha(Color.urgent, 0.55)
 
                 Row {
                   id: sysDebugRow
@@ -2200,17 +2901,10 @@ Item {
                   spacing: Style.space(4)
 
                   PlainText {
-                    text: "⚠"
-                    color: Color.urgent
-                    font.family: root.face
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                  }
-                  PlainText {
                     text: "SYSDEBUG"
                     color: Color.urgent
                     font.family: root.face
-                    font.pixelSize: Math.max(9, Style.font.caption - 1)
+                    font.pixelSize: Style.font.caption
                     font.bold: true
                   }
                 }
@@ -2231,30 +2925,26 @@ Item {
 
             Row {
               id: rightHeaderRow
-              x: root.isDocked ? 0 : Math.max(0, parent.width - width)
-              y: root.isDocked ? Style.space(36) : Math.round((parent.height - height) / 2)
-              spacing: Style.space(5)
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
 
               NavButton {
-                icon: root.previewOpen ? "▾" : "◫"
-                label: root.isDocked ? "" : (root.previewOpen ? root.t("hideImage") : root.t("image"))
+                icon: ""
+                label: root.previewOpen ? root.t("hideImgShort") : root.t("image")
                 tip: root.t("tipImage")
                 active: root.previewOpen
-                onPressed: root.previewOpen = !root.previewOpen
+                onPressed: {
+                  root.previewOpen = !root.previewOpen
+                  if (root.previewOpen) root.compactChatMode = false
+                }
               }
 
               NavButton {
-                icon: "✎"
-                label: root.isDocked ? "Edit" : "Omasnap"
+                icon: ""
+                label: "Edit"
                 tip: root.t("tipOmasnap")
                 onPressed: root.beginEdit()
-              }
-
-              NavButton {
-                icon: ">_"
-                label: "CLI"
-                tip: root.t("tipCli")
-                onPressed: root.openTerminal()
               }
 
               // Clean 1px visual divider between actions and window chrome
@@ -2267,19 +2957,30 @@ Item {
               }
 
               NavButton {
-                readonly property string nextMode: root.nextHudPlacement()
-                icon: root.placementIcon(nextMode)
-                label: ""
-                tip: root.placementLabel(root.hudPlacement) + " → " + root.t("moveHudTo") + " " + root.placementLabel(nextMode)
-                active: root.isDocked
-                onPressed: root.cycleHudPlacement()
-              }
-
-              NavButton {
                 icon: "—"
                 label: ""
                 tip: root.t("tipMinimize")
                 onPressed: root.minimizeToBackground()
+              }
+
+              NavButton {
+                readonly property string nextMode: root.nextHudPlacement()
+                icon: root.placementIcon(nextMode)
+                label: ""
+                tip: root.placementLabel(root.hudPlacement) + " → " + root.t("moveHudTo") + " " + root.placementLabel(nextMode)
+                active: root.isDocked && !root.fullscreen
+                onPressed: {
+                  root.fullscreen = false
+                  root.cycleHudPlacement()
+                }
+              }
+
+              NavButton {
+                icon: root.fullscreen ? "❐" : "□"
+                label: ""
+                tip: root.t("tipFullscreen")
+                active: root.fullscreen
+                onPressed: root.toggleFullscreen()
               }
 
               NavButton {
@@ -2288,6 +2989,202 @@ Item {
                 tip: root.t("tipClose")
                 danger: true
                 onPressed: root.closeWindow()
+              }
+            }
+          }
+
+          // 1b. INLINE QUICK MODEL SWITCHER (1-click switching between all active built-in & custom models)
+          Flow {
+            visible: !root.editing && root.modelPickerOpen
+            width: parent.width
+            spacing: Style.space(6)
+
+            Repeater {
+              model: root.modelChoices
+              delegate: Rectangle {
+                required property var modelData
+                required property int index
+                readonly property bool ready: root.isVendorReady(modelData.vendorKey)
+                readonly property bool selected: root.model === modelData.id
+                visible: ready
+                width: visible ? mpRow.implicitWidth + Style.space(10) : 0
+                height: Style.space(24)
+                radius: Style.space(6)
+                color: selected ? Util.alpha(Color.accent, 0.18) : (mpMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025))
+                border.width: 1
+                border.color: selected ? Util.alpha(Color.accent, 0.65) : (mpMouse.containsMouse ? Util.alpha(root.fg, 0.22) : Util.alpha(root.fg, 0.08))
+
+                Row {
+                  id: mpRow
+                  anchors.centerIn: parent
+                  spacing: Style.space(5)
+                  PlainText {
+                    text: modelData.vendor + " · " + modelData.label
+                    color: selected ? Color.accent : root.fg
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                    font.bold: selected
+                  }
+                }
+
+                MouseArea {
+                  id: mpMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.pickModelAt(index)
+                    root.modelPickerOpen = false
+                  }
+                }
+              }
+            }
+          }
+
+          // 1c. INLINE SESSION HISTORY DRAWER (🕘 recent screenshot chats)
+          Rectangle {
+            visible: !root.editing && root.historyDrawerOpen
+            width: parent.width
+            height: visible ? (histCol.implicitHeight + Style.space(16)) : 0
+            radius: Style.space(9)
+            color: root.surface
+            border.width: 1
+            border.color: root.line
+            clip: true
+
+            Column {
+              id: histCol
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.margins: Style.space(8)
+              spacing: Style.space(6)
+
+              Item {
+                width: parent.width
+                height: Style.space(20)
+
+                PlainText {
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "🕘 " + root.t("historyTitle")
+                  color: root.fg
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Rectangle {
+                  visible: root.sessionHistory.length > 0
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: clrHistLbl.implicitWidth + Style.space(12)
+                  height: Style.space(20)
+                  radius: Style.space(5)
+                  color: clrHistMouse.containsMouse ? Util.alpha(Color.urgent, 0.2) : "transparent"
+                  border.width: 1
+                  border.color: clrHistMouse.containsMouse ? Color.urgent : root.line
+
+                  PlainText {
+                    id: clrHistLbl
+                    anchors.centerIn: parent
+                    text: root.t("clearHistory")
+                    color: clrHistMouse.containsMouse ? Color.urgent : root.dim
+                    font.family: root.face
+                    font.pixelSize: Math.max(9, Style.font.caption - 1)
+                  }
+
+                  MouseArea {
+                    id: clrHistMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.clearSessionHistory()
+                  }
+                }
+              }
+
+              PlainText {
+                visible: root.sessionHistory.length === 0
+                text: root.t("historyEmpty")
+                color: root.dim
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+              }
+
+              Flickable {
+                visible: root.sessionHistory.length > 0
+                width: parent.width
+                height: Math.min(Style.space(156), histListCol.implicitHeight)
+                contentWidth: width
+                contentHeight: histListCol.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Column {
+                  id: histListCol
+                  width: parent.width
+                  spacing: Style.space(4)
+
+                  Repeater {
+                    model: root.sessionHistory
+                    delegate: Rectangle {
+                      required property var modelData
+                      readonly property bool isCurrent: modelData && modelData.id === root.currentSessionId
+                      width: histListCol.width
+                      height: Style.space(32)
+                      radius: Style.space(6)
+                      color: isCurrent
+                        ? Util.alpha(Color.accent, 0.16)
+                        : (hRowMouse.containsMouse ? root.surfaceHover : Util.alpha(Color.background, 0.35))
+                      border.width: 1
+                      border.color: isCurrent || hRowMouse.containsMouse ? Color.accent : "transparent"
+
+                      Row {
+                        anchors.fill: parent
+                        anchors.leftMargin: Style.space(8)
+                        anchors.rightMargin: Style.space(8)
+                        spacing: Style.space(8)
+
+                        PlainText {
+                          anchors.verticalCenter: parent.verticalCenter
+                          text: modelData.timeLabel || ""
+                          color: Color.accent
+                          font.family: root.face
+                          font.pixelSize: Math.max(9, Style.font.caption - 1)
+                          font.bold: true
+                        }
+
+                        PlainText {
+                          anchors.verticalCenter: parent.verticalCenter
+                          width: parent.width - Style.space(115)
+                          text: modelData.title || ""
+                          color: root.fg
+                          font.family: root.face
+                          font.pixelSize: Style.font.caption
+                          elide: Text.ElideRight
+                        }
+
+                        PlainText {
+                          anchors.verticalCenter: parent.verticalCenter
+                          text: modelData.activeTurnModelLabel || ""
+                          color: root.dim
+                          font.family: root.face
+                          font.pixelSize: Math.max(9, Style.font.caption - 1)
+                          elide: Text.ElideRight
+                        }
+                      }
+
+                      MouseArea {
+                        id: hRowMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.restoreSession(modelData)
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -2326,8 +3223,8 @@ Item {
           anchors.bottom: bottomSection.top
           anchors.leftMargin: root.pad
           anchors.rightMargin: root.pad
-          anchors.topMargin: Style.space(10)
-          anchors.bottomMargin: Style.space(10)
+          anchors.topMargin: Style.space(8)
+          anchors.bottomMargin: Style.space(4)
           contentWidth: width
           contentHeight: middleCol.implicitHeight
           clip: true
@@ -2338,41 +3235,45 @@ Item {
             id: middleCol
             width: middleScroll.width
             spacing: Style.space(10)
+            onImplicitHeightChanged: {
+              if (root.chatHistory.length > 0 || root.stage === "analysing") {
+                Qt.callLater(root.scrollToBottom)
+              }
+            }
 
-            // 3. PREVIEW & DEDICATED INLINE ANNOTATION BAR (never covers screenshot!)
+            // 3. PREVIEW & DEDICATED INLINE ANNOTATION BAR (never covers screenshot, never jumps!)
             Rectangle {
               id: frame
               width: parent.width
               visible: root.previewOpen && root.imagePath !== "" && !root.editing
-              height: visible ? (root.isDocked ? Style.space(260) : Style.space(245)) : 0
-              radius: Style.space(10)
+              height: {
+                if (!visible) return 0
+                if (root.customPreviewHeight > 0) {
+                  var maxH = root.fullscreen || root.effectiveDocked
+                    ? Math.max(Style.space(230), Math.floor(middleScroll.height - Style.space(64)))
+                    : Math.max(Style.space(320), Math.round(winRoot.height * 0.65))
+                  return Math.max(Style.space(160), Math.min(maxH, Math.round(root.customPreviewHeight)))
+                }
+                if (root.fullscreen && dock.implicitHeight === 0) {
+                  return Math.max(Style.space(260), Math.floor(middleScroll.height - Style.space(16)))
+                }
+                return Style.space(255)
+              }
+              radius: Style.space(8)
               color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.55)
               border.width: 1
-              border.color: root.stage === "analysing" ? root.colAnalysing : root.line
+              border.color: Util.alpha(root.fg, 0.08)
               clip: true
 
-              // Dedicated slim top bar for Arrow / Box / Crop + hint (zero overlap on screenshot)
+              // Steady slim top bar for Zoom + Pan / Arrow / Box / Crop / Undo / Clear (never collapses while preview is open)
               Rectangle {
                 id: annotBar
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: Style.space(36)
+                height: Style.space(32)
+                clip: true
                 color: Util.alpha(root.fg, 0.04)
-
-                PlainText {
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(10)
-                  anchors.right: toolBarRow.left
-                  anchors.rightMargin: Style.space(8)
-                  anchors.verticalCenter: parent.verticalCenter
-                  visible: !root.isDocked && root.marks.length === 0 && root.cropNorm === null
-                  text: root.t("inlineToolsHint")
-                  color: root.dim
-                  font.family: root.face
-                  font.pixelSize: Math.max(10, Style.font.caption - 1)
-                  elide: Text.ElideRight
-                }
 
                 Row {
                   id: toolBarRow
@@ -2381,16 +3282,54 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(4)
 
+                  NavButton {
+                    icon: "−"
+                    label: ""
+                    tip: root.t("tipZoomOut")
+                    onPressed: shotFlick.setZoom(root.imageZoom - 0.5)
+                  }
+
+                  NavButton {
+                    icon: ""
+                    label: Math.round(root.imageZoom * 100) + "%"
+                    tip: root.t("tipZoomReset")
+                    active: root.imageZoom > 1.01
+                    onPressed: shotFlick.setZoom(1.0)
+                  }
+
+                  NavButton {
+                    icon: "+"
+                    label: ""
+                    tip: root.t("tipZoomIn")
+                    onPressed: shotFlick.setZoom(root.imageZoom + 0.5)
+                  }
+
+                  Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 1
+                    height: Style.space(14)
+                    color: root.line
+                    opacity: 0.55
+                  }
+
+                  NavButton {
+                    visible: root.imageZoom > 1.01
+                    icon: ""
+                    label: root.t("panTool")
+                    tip: root.t("tipPanTool")
+                    active: root.tool === "pan"
+                    onPressed: root.tool = (root.tool === "pan" ? "arrow" : "pan")
+                  }
+
                   Repeater {
                     model: [
-                      { id: "arrow", icon: "↗", key: "arrow", tipKey: "tipArrow" },
-                      { id: "box", icon: "▢", key: "box", tipKey: "tipBox" },
-                      { id: "crop", icon: "✂", key: "crop", tipKey: "tipCrop" }
+                      { id: "arrow", key: "arrow", tipKey: "tipArrow" },
+                      { id: "box",   key: "box",   tipKey: "tipBox" },
+                      { id: "crop",  key: "crop",  tipKey: "tipCrop" }
                     ]
                     delegate: NavButton {
                       required property var modelData
-                      height: Style.space(26)
-                      icon: modelData.icon
+                      icon: ""
                       label: root.t(modelData.key)
                       tip: root.t(modelData.tipKey)
                       active: root.tool === modelData.id
@@ -2400,9 +3339,8 @@ Item {
 
                   NavButton {
                     visible: root.cropNorm !== null
-                    height: Style.space(26)
-                    icon: "✓"
-                    label: root.isDocked ? "" : root.t("applyCrop")
+                    icon: ""
+                    label: root.t("applyCrop")
                     tip: root.t("tipApplyCrop")
                     accent: true
                     onPressed: root.applyCrop()
@@ -2410,9 +3348,16 @@ Item {
 
                   NavButton {
                     visible: root.marks.length > 0 || root.cropNorm !== null
-                    height: Style.space(26)
-                    icon: "↺"
-                    label: root.isDocked ? "" : root.t("clear")
+                    icon: ""
+                    label: root.t("undoMark")
+                    tip: root.t("tipUndoMark")
+                    onPressed: root.undoLastMark()
+                  }
+
+                  NavButton {
+                    visible: root.marks.length > 0 || root.cropNorm !== null
+                    icon: ""
+                    label: root.t("clear")
                     tip: root.t("tipClearMarks")
                     onPressed: root.clearMarks()
                   }
@@ -2423,12 +3368,11 @@ Item {
                   anchors.right: parent.right
                   anchors.bottom: parent.bottom
                   height: 1
-                  color: root.line
-                  opacity: 0.55
+                  color: Util.alpha(root.fg, 0.08)
                 }
               }
 
-              // Clean unobstructed screenshot canvas below annotBar
+              // Clean unobstructed zoomable & scrollable screenshot canvas below annotBar
               Item {
                 id: shotViewport
                 anchors.top: annotBar.bottom
@@ -2437,203 +3381,547 @@ Item {
                 anchors.bottom: parent.bottom
                 clip: true
 
-                Image {
-                  id: shot
+                WheelHandler {
+                  acceptedModifiers: Qt.ControlModifier
+                  onWheel: function(event) {
+                    var delta = event.angleDelta.y > 0 ? 0.25 : -0.25
+                    shotFlick.setZoom(root.imageZoom + delta)
+                    event.accepted = true
+                  }
+                }
+
+                Flickable {
+                  id: shotFlick
                   anchors.fill: parent
-                  anchors.margins: Style.space(6)
-                  visible: frame.visible
-                  source: root.fileUrl(root.imagePath)
-                  fillMode: Image.PreserveAspectFit
-                  asynchronous: false
-                  smooth: true
-                  mipmap: true
-                  cache: false
-                  onStatusChanged: if (status === Image.Ready) markCanvas.requestPaint()
-                }
+                  contentWidth: Math.max(width, Math.round(width * root.imageZoom))
+                  contentHeight: Math.max(height, Math.round(height * root.imageZoom))
+                  clip: true
+                  boundsBehavior: Flickable.StopAtBounds
+                  // Never let Flickable steal left-drag while Arrow, Box, or Crop tool is active!
+                  interactive: root.tool === "pan" && root.imageZoom > 1.01
 
-                Connections {
-                  target: root
-                  function onPreviewOpenChanged() {
-                    if (root.previewOpen) Qt.callLater(function() { markCanvas.requestPaint() })
-                  }
-                }
-
-                Rectangle {
-                  id: laserLine
-                  visible: root.stage === "analysing" && !root.paused
-                  width: parent.width
-                  height: Style.space(3)
-                  color: root.colAnalysing
-                  y: 0
-
-                  Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width
-                    height: Style.space(22)
-                    color: Util.alpha(root.colAnalysing, 0.18)
-                  }
-
-                  SequentialAnimation on y {
-                    running: laserLine.visible && Style.duration(100) > 0
-                    loops: Animation.Infinite
-                    NumberAnimation { from: 0; to: shotViewport.height; duration: Style.duration(1250); easing.type: Easing.InOutSine }
-                    NumberAnimation { from: shotViewport.height; to: 0; duration: Style.duration(1250); easing.type: Easing.InOutSine }
-                  }
-                }
-
-                Canvas {
-                  id: markCanvas
-                  anchors.fill: shot
-                  onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.clearRect(0, 0, width, height)
-                    var area = root.imageContent()
-                    function strokeMark(mark, dashed) {
-                      var x1 = area.x + mark.x1 * area.w
-                      var y1 = area.y + mark.y1 * area.h
-                      var x2 = area.x + mark.x2 * area.w
-                      var y2 = area.y + mark.y2 * area.h
-                      ctx.strokeStyle = dashed ? "#ffffff" : "#d6ff4a"
-                      ctx.fillStyle = "#d6ff4a"
-                      ctx.lineWidth = 2.2
-                      if (mark.kind === "box" || mark.kind === "crop") {
-                        ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1))
-                        return
+                  function setZoom(nextZoom) {
+                    var clamped = Math.max(1.0, Math.min(4.0, Math.round(nextZoom * 100) / 100))
+                    var oldW = Math.max(1, contentWidth)
+                    var oldH = Math.max(1, contentHeight)
+                    var cx = (contentX + width / 2.0) / oldW
+                    var cy = (contentY + height / 2.0) / oldH
+                    root.imageZoom = clamped
+                    if (clamped <= 1.01 && root.tool === "pan") root.tool = "arrow"
+                    Qt.callLater(function() {
+                      if (clamped <= 1.01) {
+                        shotFlick.contentX = 0
+                        shotFlick.contentY = 0
+                      } else {
+                        var newW = Math.max(shotFlick.width, Math.round(shotFlick.width * clamped))
+                        var newH = Math.max(shotFlick.height, Math.round(shotFlick.height * clamped))
+                        shotFlick.contentX = Math.max(0, Math.min(newW - shotFlick.width, Math.round(cx * newW - shotFlick.width / 2.0)))
+                        shotFlick.contentY = Math.max(0, Math.min(newH - shotFlick.height, Math.round(cy * newH - shotFlick.height / 2.0)))
                       }
-                      ctx.beginPath()
-                      ctx.moveTo(x1, y1)
-                      ctx.lineTo(x2, y2)
-                      ctx.stroke()
-                      var angle = Math.atan2(y2 - y1, x2 - x1)
-                      ctx.beginPath()
-                      ctx.moveTo(x2, y2)
-                      ctx.lineTo(x2 + 11 * Math.cos(angle + 2.6), y2 + 11 * Math.sin(angle + 2.6))
-                      ctx.lineTo(x2 + 11 * Math.cos(angle - 2.6), y2 + 11 * Math.sin(angle - 2.6))
-                      ctx.closePath()
-                      ctx.fill()
-                    }
-                    for (var i = 0; i < root.marks.length; i++) strokeMark(root.marks[i], false)
-                    if (root.cropNorm) strokeMark(root.cropNorm, false)
-                    if (root.marking && root.dragFrom && root.dragTo)
-                      strokeMark({ kind: root.tool === "crop" ? "crop" : root.tool, x1: root.dragFrom.x, y1: root.dragFrom.y, x2: root.dragTo.x, y2: root.dragTo.y }, true)
+                      markCanvas.requestPaint()
+                    })
                   }
-                }
 
-                MouseArea {
-                  enabled: root.previewOpen
-                  anchors.fill: shot
-                  cursorShape: Qt.CrossCursor
-                  acceptedButtons: Qt.LeftButton
-                  onPressed: function(mouse) {
-                    var point = root.toNorm(mouse.x, mouse.y)
-                    root.resizeCorner = root.tool === "crop" ? root.hitCorner(point) : ""
-                    root.dragFrom = point
-                    root.dragTo = point
-                    root.marking = root.resizeCorner === ""
-                  }
-                  onPositionChanged: function(mouse) {
-                    var point = root.toNorm(mouse.x, mouse.y)
-                    if (root.resizeCorner !== "") {
-                      root.moveCorner(root.resizeCorner, point)
-                      return
+                  Item {
+                    id: shotStage
+                    width: shotFlick.contentWidth
+                    height: shotFlick.contentHeight
+
+                    Image {
+                      id: shot
+                      anchors.fill: parent
+                      anchors.margins: Style.space(6)
+                      visible: frame.visible
+                      source: root.fileUrl(root.imagePath)
+                      fillMode: Image.PreserveAspectFit
+                      asynchronous: false
+                      smooth: true
+                      mipmap: true
+                      cache: false
+                      onStatusChanged: if (status === Image.Ready) markCanvas.requestPaint()
+                      onWidthChanged: markCanvas.requestPaint()
+                      onHeightChanged: markCanvas.requestPaint()
                     }
-                    root.dragTo = point
-                    markCanvas.requestPaint()
-                  }
-                  onReleased: function(mouse) {
-                    if (root.resizeCorner !== "") {
-                      root.resizeCorner = ""
-                      root.marking = false
-                      return
+
+                    Connections {
+                      target: root
+                      function onPreviewOpenChanged() {
+                        if (root.previewOpen) Qt.callLater(function() { markCanvas.requestPaint() })
+                      }
+                      function onImageZoomChanged() {
+                        Qt.callLater(function() { markCanvas.requestPaint() })
+                      }
                     }
-                    root.commitDrag(root.dragFrom, root.toNorm(mouse.x, mouse.y))
-                    root.marking = false
-                    root.dragFrom = null
-                    root.dragTo = null
+
+                    Canvas {
+                      id: markCanvas
+                      anchors.fill: shot
+                      onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        var area = root.imageContent()
+                        function strokeMark(mark, dashed) {
+                          var x1 = area.x + mark.x1 * area.w
+                          var y1 = area.y + mark.y1 * area.h
+                          var x2 = area.x + mark.x2 * area.w
+                          var y2 = area.y + mark.y2 * area.h
+                          ctx.strokeStyle = dashed ? "#ffffff" : "#d6ff4a"
+                          ctx.fillStyle = "#d6ff4a"
+                          ctx.lineWidth = 2.2
+                          if (mark.kind === "box" || mark.kind === "crop") {
+                            ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1))
+                            return
+                          }
+                          ctx.beginPath()
+                          ctx.moveTo(x1, y1)
+                          ctx.lineTo(x2, y2)
+                          ctx.stroke()
+                          var angle = Math.atan2(y2 - y1, x2 - x1)
+                          ctx.beginPath()
+                          ctx.moveTo(x2, y2)
+                          ctx.lineTo(x2 + 11 * Math.cos(angle + 2.6), y2 + 11 * Math.sin(angle + 2.6))
+                          ctx.lineTo(x2 + 11 * Math.cos(angle - 2.6), y2 + 11 * Math.sin(angle - 2.6))
+                          ctx.closePath()
+                          ctx.fill()
+                        }
+                        for (var i = 0; i < root.marks.length; i++) strokeMark(root.marks[i], false)
+                        if (root.cropNorm) strokeMark(root.cropNorm, false)
+                        if (root.marking && root.dragFrom && root.dragTo)
+                          strokeMark({ kind: root.tool === "crop" ? "crop" : root.tool, x1: root.dragFrom.x, y1: root.dragFrom.y, x2: root.dragTo.x, y2: root.dragTo.y }, true)
+                      }
+                    }
+
+                    MouseArea {
+                      id: drawMouse
+                      enabled: root.previewOpen && root.tool !== "pan"
+                      anchors.fill: shot
+                      cursorShape: panning ? Qt.ClosedHandCursor : Qt.CrossCursor
+                      acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                      property bool panning: false
+                      property real panStartX: 0
+                      property real panStartY: 0
+                      property real startContentX: 0
+                      property real startContentY: 0
+
+                      onPressed: function(mouse) {
+                        if (mouse.button === Qt.RightButton || mouse.button === Qt.MiddleButton) {
+                          if (root.imageZoom > 1.01) {
+                            panning = true
+                            var pt = drawMouse.mapToItem(shotViewport, mouse.x, mouse.y)
+                            panStartX = pt.x
+                            panStartY = pt.y
+                            startContentX = shotFlick.contentX
+                            startContentY = shotFlick.contentY
+                          }
+                          return
+                        }
+                        panning = false
+                        var point = root.toNorm(mouse.x, mouse.y)
+                        root.resizeCorner = root.tool === "crop" ? root.hitCorner(point) : ""
+                        root.dragFrom = point
+                        root.dragTo = point
+                        root.marking = root.resizeCorner === ""
+                      }
+                      onPositionChanged: function(mouse) {
+                        if (panning) {
+                          var pt = drawMouse.mapToItem(shotViewport, mouse.x, mouse.y)
+                          var maxCX = Math.max(0, shotFlick.contentWidth - shotFlick.width)
+                          var maxCY = Math.max(0, shotFlick.contentHeight - shotFlick.height)
+                          shotFlick.contentX = Math.max(0, Math.min(maxCX, startContentX - (pt.x - panStartX)))
+                          shotFlick.contentY = Math.max(0, Math.min(maxCY, startContentY - (pt.y - panStartY)))
+                          return
+                        }
+                        if (!root.marking && root.resizeCorner === "") return
+                        var point = root.toNorm(mouse.x, mouse.y)
+                        if (root.resizeCorner !== "") {
+                          root.moveCorner(root.resizeCorner, point)
+                          return
+                        }
+                        root.dragTo = point
+                        markCanvas.requestPaint()
+                      }
+                      onReleased: function(mouse) {
+                        if (panning) {
+                          panning = false
+                          return
+                        }
+                        if (root.resizeCorner !== "") {
+                          root.resizeCorner = ""
+                          root.marking = false
+                          return
+                        }
+                        root.commitDrag(root.dragFrom, root.toNorm(mouse.x, mouse.y))
+                        root.marking = false
+                        root.dragFrom = null
+                        root.dragTo = null
+                        markCanvas.requestPaint()
+                      }
+                      onCanceled: {
+                        panning = false
+                        root.resizeCorner = ""
+                        root.marking = false
+                        root.dragFrom = null
+                        root.dragTo = null
+                        markCanvas.requestPaint()
+                      }
+                    }
                   }
                 }
               }
             }
 
-          // 5. DOCK: ACTIVE SCAN BANNER, ANSWER CARD & PROMPTS
+            // Draggable bottom-edge splitter handle to resize screenshot preview up/down (double-click resets)
+            Item {
+              id: previewResizer
+              visible: frame.visible
+              width: parent.width
+              height: visible ? Style.space(8) : 0
+
+              Rectangle {
+                anchors.centerIn: parent
+                width: resizeMouse.containsMouse || resizeMouse.pressed ? Style.space(64) : Style.space(40)
+                height: Style.space(3)
+                radius: height / 2
+                color: resizeMouse.containsMouse || resizeMouse.pressed ? Color.accent : Util.alpha(root.fg, 0.22)
+                Behavior on width { NumberAnimation { duration: Style.duration(120) } }
+                Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+              }
+
+              MouseArea {
+                id: resizeMouse
+                anchors.fill: parent
+                anchors.topMargin: -4
+                anchors.bottomMargin: -4
+                hoverEnabled: true
+                cursorShape: Qt.SizeVerCursor
+                property real startY: 0
+                property real startH: 0
+                onPressed: function(mouse) {
+                  var pt = resizeMouse.mapToItem(winRoot, mouse.x, mouse.y)
+                  startY = pt.y
+                  startH = frame.height
+                }
+                onPositionChanged: function(mouse) {
+                  if (!pressed) return
+                  var pt = resizeMouse.mapToItem(winRoot, mouse.x, mouse.y)
+                  root.customPreviewHeight = Math.max(Style.space(120), startH + (pt.y - startY))
+                }
+                onDoubleClicked: root.customPreviewHeight = -1
+              }
+            }
+
+          // 5. DOCK: MULTI-TURN CHAT THREAD, MINIMAL TYPING INDICATOR & LATEST ANSWER
           Column {
             id: dock
             visible: !root.editing
             width: parent.width
-            spacing: Style.space(10)
+            spacing: Style.space(8)
 
-            Rectangle {
-              width: parent.width
-              visible: root.stage === "analysing"
-              height: visible ? Style.space(44) : 0
-              radius: Style.space(10)
-              color: Util.alpha(root.colAnalysing, 0.12)
-              border.width: 1
-              border.color: Util.alpha(root.colAnalysing, 0.6)
+            // Past messages in the current screenshot conversation thread
+            Repeater {
+              model: root.chatHistory
+              delegate: Item {
+                required property var modelData
+                required property int index
+                readonly property bool isUser: modelData.role === "user"
+                readonly property bool isShot: modelData.role === "screenshot"
+                width: dock.width
+                height: isUser ? userBubble.implicitHeight : (isShot ? shotBubble.implicitHeight : pastAiCard.implicitHeight)
 
-              Row {
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(14)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(10)
+                // Right-aligned User Chat Bubble
+                Rectangle {
+                  id: userBubble
+                  visible: parent.isUser
+                  anchors.right: parent.right
+                  width: Math.min(parent.width * 0.82, userMsgLbl.implicitWidth + Style.space(24))
+                  implicitHeight: userMsgLbl.implicitHeight + Style.space(16)
+                  radius: Style.space(10)
+                  color: Util.alpha(Color.accent, 0.16)
+                  border.width: 1
+                  border.color: Util.alpha(Color.accent, 0.45)
 
-                Row {
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(4)
-                  Repeater {
-                    model: 4
-                    delegate: Rectangle {
-                      required property int index
-                      width: Style.space(4)
-                      height: Style.space(14)
-                      radius: width / 2
-                      color: root.colAnalysing
-                      SequentialAnimation on height {
-                        running: root.stage === "analysing" && !root.paused && Style.duration(100) > 0
-                        loops: Animation.Infinite
-                        PauseAnimation { duration: Style.duration(index * 110) }
-                        NumberAnimation { from: Style.space(6); to: Style.space(18); duration: Style.duration(280); easing.type: Easing.InOutSine }
-                        NumberAnimation { from: Style.space(18); to: Style.space(6); duration: Style.duration(280); easing.type: Easing.InOutSine }
+                  PlainText {
+                    id: userMsgLbl
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, dock.width * 0.82 - Style.space(24))
+                    text: modelData.text || ""
+                    color: root.fg
+                    font.family: root.face
+                    font.pixelSize: Style.font.body
+                    wrapMode: Text.WordWrap
+                  }
+                }
+
+                // Right-aligned In-Chat New Screenshot Attachment Card
+                Rectangle {
+                  id: shotBubble
+                  visible: parent.isShot
+                  anchors.right: parent.right
+                  width: shotBubbleRow.implicitWidth + Style.space(18)
+                  implicitHeight: Style.space(52)
+                  radius: Style.space(10)
+                  color: shotBubbleMouse.containsMouse ? root.surfaceHover : Util.alpha(Color.accent, 0.08)
+                  border.width: 1
+                  border.color: shotBubbleMouse.containsMouse ? Color.accent : Util.alpha(Color.accent, 0.35)
+
+                  Row {
+                    id: shotBubbleRow
+                    anchors.centerIn: parent
+                    spacing: Style.space(10)
+
+                    Rectangle {
+                      width: Style.space(56)
+                      height: Style.space(36)
+                      anchors.verticalCenter: parent.verticalCenter
+                      radius: Style.space(5)
+                      color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.65)
+                      border.width: 1
+                      border.color: Util.alpha(root.fg, 0.12)
+                      clip: true
+
+                      Image {
+                        anchors.fill: parent
+                        anchors.margins: 1
+                        source: parent.visible && modelData.imagePath ? root.fileUrl(modelData.imagePath) : ""
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: false
+                      }
+                    }
+
+                    Column {
+                      anchors.verticalCenter: parent.verticalCenter
+                      spacing: Style.space(2)
+
+                      PlainText {
+                        text: modelData.text || root.t("newShotAttached")
+                        color: Color.accent
+                        font.family: root.face
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                      }
+
+                      PlainText {
+                        text: {
+                          var p = String(modelData.imagePath || "")
+                          var slash = p.lastIndexOf("/")
+                          return slash >= 0 ? p.substring(slash + 1) : p
+                        }
+                        color: root.dim
+                        font.family: root.face
+                        font.pixelSize: Math.max(9, Style.font.caption - 1)
+                      }
+                    }
+                  }
+
+                  MouseArea {
+                    id: shotBubbleMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      if (modelData.imagePath) {
+                        root.imagePath = String(modelData.imagePath)
+                        root.previewOpen = true
+                        root.compactChatMode = false
                       }
                     }
                   }
                 }
 
+                // Left-aligned Past Assistant Turn Card
+                Rectangle {
+                  id: pastAiCard
+                  visible: !parent.isUser && !parent.isShot
+                  width: parent.width
+                  implicitHeight: pastAiCol.implicitHeight + Style.space(16)
+                  radius: Style.space(10)
+                  color: root.isTurnSelected(parent.index) ? Util.alpha(Color.accent, 0.09) : Util.alpha(root.fg, 0.022)
+                  border.width: root.isTurnSelected(parent.index) ? 1.5 : 0
+                  border.color: Color.accent
+
+                  Column {
+                    id: pastAiCol
+                    x: Style.space(12)
+                    y: Style.space(8)
+                    width: parent.width - Style.space(24)
+                    spacing: Style.space(6)
+
+                    Item {
+                      width: parent.width
+                      height: Style.space(22)
+
+                      Row {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(6)
+                        PlainText {
+                          text: modelData.model || (root.producerName + " " + root.modelLabel)
+                          color: root.dim
+                          font.family: root.face
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+                        PlainText {
+                          visible: (modelData.handoffFrom || "") !== ""
+                          text: "· " + root.t("handoffFrom") + " " + (modelData.handoffFrom || "")
+                          color: Color.accent
+                          font.family: root.face
+                          font.pixelSize: Math.max(9, Style.font.caption - 1)
+                        }
+                      }
+
+                      Row {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(4)
+
+                        Rectangle {
+                          width: pSelLbl.implicitWidth + Style.space(8)
+                          height: Style.space(20)
+                          radius: Style.space(5)
+                          color: root.isTurnSelected(index)
+                            ? Util.alpha(Color.accent, 0.22)
+                            : (pSelMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025))
+                          border.width: 1
+                          border.color: root.isTurnSelected(index) ? Color.accent : Util.alpha(root.fg, 0.08)
+
+                          PlainText {
+                            id: pSelLbl
+                            anchors.centerIn: parent
+                            text: root.isTurnSelected(index) ? ("✓ " + root.t("selectedTurn")) : root.t("selectTurn")
+                            color: root.isTurnSelected(index) ? Color.accent : root.dim
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 1)
+                          }
+                          MouseArea {
+                            id: pSelMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.toggleSelectTurn(index)
+                          }
+                        }
+
+                        Rectangle {
+                          width: pCpLbl.implicitWidth + Style.space(8)
+                          height: Style.space(20)
+                          radius: Style.space(5)
+                          color: root.copiedTurnIdx === index
+                            ? Util.alpha(root.colSuccess, 0.2)
+                            : (pCpMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025))
+                          border.width: 1
+                          border.color: root.copiedTurnIdx === index ? root.colSuccess : Util.alpha(root.fg, 0.08)
+
+                          PlainText {
+                            id: pCpLbl
+                            anchors.centerIn: parent
+                            text: root.copiedTurnIdx === index ? root.t("copied") : root.t("copy")
+                            color: root.copiedTurnIdx === index ? root.colSuccess : root.fg
+                            font.family: root.face
+                            font.pixelSize: Math.max(9, Style.font.caption - 1)
+                          }
+                          MouseArea {
+                            id: pCpMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.copySingleTurn(modelData.text || "", index)
+                          }
+                        }
+                      }
+                    }
+
+                    Repeater {
+                      model: modelData.blocks || []
+                      delegate: Item {
+                        required property var modelData
+                        width: pastAiCol.width
+                        height: modelData.kind === "code" ? pastCodeCard.implicitHeight : pastRichBlock.implicitHeight
+
+                        TextEdit {
+                          id: pastRichBlock
+                          visible: modelData.kind !== "code"
+                          width: parent.width
+                          text: modelData.html || ""
+                          textFormat: TextEdit.RichText
+                          readOnly: true
+                          selectByMouse: true
+                          color: root.bodyText
+                          selectionColor: Color.accent
+                          selectedTextColor: Color.background
+                          font.family: root.face
+                          font.pixelSize: Style.font.body
+                          wrapMode: TextEdit.WordWrap
+                        }
+
+                        Rectangle {
+                          id: pastCodeCard
+                          visible: modelData.kind === "code"
+                          width: parent.width
+                          implicitHeight: pastCodeText.implicitHeight + Style.space(14)
+                          radius: Style.space(7)
+                          color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.72)
+                          border.width: 1
+                          border.color: root.line
+
+                          TextEdit {
+                            id: pastCodeText
+                            anchors.fill: parent
+                            anchors.margins: Style.space(7)
+                            text: modelData.html || ""
+                            textFormat: TextEdit.RichText
+                            readOnly: true
+                            selectByMouse: true
+                            color: root.fg
+                            selectionColor: Color.accent
+                            selectedTextColor: Color.background
+                            font.family: root.face
+                            font.pixelSize: Style.font.body
+                            wrapMode: TextEdit.WordWrap
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            // Calm, minimal chat typing bubble (only shown before first streaming token arrives)
+            Rectangle {
+              visible: root.stage === "analysing" && root.answer === ""
+              width: typingRow.implicitWidth + Style.space(24)
+              height: visible ? Style.space(32) : 0
+              radius: Style.space(10)
+              color: Util.alpha(root.fg, 0.035)
+
+              Row {
+                id: typingRow
+                anchors.centerIn: parent
+                spacing: Style.space(8)
+
                 PlainText {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.paused
-                    ? root.t("paused")
-                    : (root.streamStep !== "" ? (root.producerName + " " + root.modelLabel + " · " + root.streamStep) : (root.producerName + " " + root.modelLabel + root.t("inspecting")))
-                  color: root.colAnalysing
+                  text: "•••"
+                  color: Color.accent
                   font.family: root.face
                   font.pixelSize: Style.font.body
                   font.bold: true
-                  elide: Text.ElideRight
-                  width: Math.min(implicitWidth, dock.width - Style.space(210))
+                  SequentialAnimation on opacity {
+                    running: root.stage === "analysing" && root.answer === "" && !root.paused && Style.duration(100) > 0
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 0.3; duration: Style.duration(550); easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.3; to: 1.0; duration: Style.duration(550); easing.type: Easing.InOutSine }
+                  }
                 }
-              }
 
-              Row {
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(6)
-
-                NavButton {
-                  icon: root.paused ? "▶" : "⏸"
-                  label: root.paused ? root.t("resume") : root.t("pause")
-                  tip: root.t("tipPause")
-                  customColor: root.colAnalysing
-                  active: true
-                  onPressed: root.togglePause()
-                }
-                NavButton {
-                  icon: "■"
-                  label: root.t("stop")
-                  tip: root.t("tipStop")
-                  danger: true
-                  onPressed: root.stopAsk()
+                PlainText {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.paused ? root.t("paused") : (root.producerName + " " + root.modelLabel + " · " + root.t("thinking"))
+                  color: root.dim
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
                 }
               }
             }
@@ -2699,7 +3987,7 @@ Item {
                     text: root.streamStep !== "" ? ("· " + root.streamStep) : "· LIVE"
                     color: root.dim
                     font.family: root.face
-                    font.pixelSize: Math.max(10, Style.font.caption - 1)
+                    font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
                   }
                 }
@@ -2715,7 +4003,7 @@ Item {
                   selectionColor: Color.accent
                   selectedTextColor: Color.background
                   font.family: root.face
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.body
                   wrapMode: TextEdit.WordWrap
                   Keys.onEscapePressed: root.handleEscape()
                 }
@@ -2726,38 +4014,30 @@ Item {
                   text: root.streamStep !== "" ? root.streamStep : (root.producerName + " " + root.modelLabel + root.t("inspecting"))
                   color: root.dim
                   font.family: root.face
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
                   font.italic: true
                   wrapMode: Text.WordWrap
                 }
               }
             }
 
-            // 5b. ANSWER CARD (Rich Markdown + Syntax-Highlighted Code Blocks)
+            // 5b. ANSWER AREA (clean, borderless chat flow unified with composer below)
             Rectangle {
               width: parent.width
               visible: root.answer !== ""
-              height: visible ? answerCol.implicitHeight + Style.space(24) : 0
+              height: visible ? answerCol.implicitHeight + Style.space(16) : 0
               radius: Style.space(10)
-              color: root.surface
-              border.width: 1
-              border.color: Util.alpha(root.colSuccess, 0.45)
+              color: root.isTurnSelected(999999) ? Util.alpha(Color.accent, 0.09) : Util.alpha(root.fg, 0.025)
+              border.width: root.isTurnSelected(999999) ? 1.5 : 0
+              border.color: Color.accent
               clip: true
-
-              Rectangle {
-                width: Style.space(4)
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                color: root.colSuccess
-              }
 
               Column {
                 id: answerCol
-                x: Style.space(16)
-                y: Style.space(12)
-                width: parent.width - Style.space(28)
-                spacing: Style.space(8)
+                x: Style.space(12)
+                y: Style.space(8)
+                width: parent.width - Style.space(24)
+                spacing: Style.space(4)
 
                 Item {
                   width: parent.width
@@ -2769,32 +4049,37 @@ Item {
                     spacing: Style.space(6)
 
                     PlainText {
-                      text: "✦ " + root.producerName + " " + root.modelLabel + (root.stage === "analysing" ? " · streaming…" : "")
+                      text: root.producerName + " " + root.modelLabel
                       color: root.colSuccess
                       font.family: root.face
                       font.pixelSize: Style.font.caption
                       font.bold: true
+                    }
+                    PlainText {
+                      visible: root.handoffFromLabel !== ""
+                      text: "· " + root.t("handoffFrom") + " " + root.handoffFromLabel
+                      color: Color.accent
+                      font.family: root.face
+                      font.pixelSize: Math.max(9, Style.font.caption - 1)
                     }
                   }
 
                   Row {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(6)
+                    spacing: Style.space(4)
 
                     NavButton {
-                      visible: root.systemDebug
-                      height: Style.space(24)
-                      icon: ">_"
-                      label: root.isDocked ? "" : root.t("fixCli")
-                      tip: root.t("tipFixCli")
-                      customColor: Color.urgent
-                      onPressed: root.openTerminal()
+                      icon: ""
+                      label: root.isTurnSelected(999999) ? ("✓ " + root.t("selectedTurn")) : root.t("selectTurn")
+                      tip: root.t("tipCopyChat")
+                      active: root.isTurnSelected(999999)
+                      customColor: Color.accent
+                      onPressed: root.toggleSelectTurn(999999)
                     }
 
                     NavButton {
-                      height: Style.space(24)
-                      icon: root.saveStatus === "ok" ? "✓" : "↓"
+                      icon: ""
                       label: root.saveStatus === "ok" ? root.t("saved") : root.t("save")
                       tip: root.t("tipSave")
                       active: root.saveDrawerOpen || root.saveStatus === "ok"
@@ -2803,8 +4088,7 @@ Item {
                     }
 
                     NavButton {
-                      height: Style.space(24)
-                      icon: root.copiedFeedback ? "✓" : "⎘"
+                      icon: ""
                       label: root.copiedFeedback ? root.t("copied") : root.t("copy")
                       tip: root.t("tipCopy")
                       active: root.copiedFeedback
@@ -2860,7 +4144,7 @@ Item {
                             text: modelData.label
                             color: root.lastSaveDir === modelData.dir ? Color.accent : root.fg
                             font.family: root.face
-                            font.pixelSize: Math.max(9, Style.font.caption - 2)
+                            font.pixelSize: Style.font.caption
                           }
                           MouseArea {
                             id: dirChipMouse
@@ -2897,7 +4181,7 @@ Item {
                             text: modelData
                             color: isCur ? Color.accent : root.fg
                             font.family: root.face
-                            font.pixelSize: Math.max(9, Style.font.caption - 2)
+                            font.pixelSize: Style.font.caption
                             font.bold: isCur
                           }
                           MouseArea {
@@ -2933,7 +4217,7 @@ Item {
                           text: root.t("savePathHint")
                           color: root.dim
                           font.family: root.face
-                          font.pixelSize: Math.max(10, Style.font.caption - 1)
+                          font.pixelSize: Style.font.caption
                           elide: Text.ElideRight
                         }
 
@@ -2945,7 +4229,7 @@ Item {
                           verticalAlignment: TextInput.AlignVCenter
                           color: root.fg
                           font.family: root.face
-                          font.pixelSize: Math.max(10, Style.font.caption - 1)
+                          font.pixelSize: Style.font.caption
                           clip: true
                           selectByMouse: true
                           text: root.savePathText
@@ -2968,7 +4252,7 @@ Item {
                           text: root.t("save") + " ↵"
                           color: Color.background
                           font.family: root.face
-                          font.pixelSize: Math.max(10, Style.font.caption - 1)
+                          font.pixelSize: Style.font.caption
                           font.bold: true
                         }
 
@@ -2988,7 +4272,7 @@ Item {
                       text: (root.saveStatus === "ok" ? "✓ " : "⚠ ") + root.saveStatusMsg
                       color: root.saveStatus === "ok" ? root.colSuccess : Color.urgent
                       font.family: root.face
-                      font.pixelSize: Math.max(9, Style.font.caption - 1)
+                      font.pixelSize: Style.font.caption
                       elide: Text.ElideMiddle
                     }
                   }
@@ -3007,60 +4291,24 @@ Item {
                       required property var modelData
                       required property int index
                       width: answerCol.width
-                      height: {
-                        if (modelData.kind === "code") return codeCard.implicitHeight
-                        if (modelData.kind === "bullet") return bulletRow.implicitHeight
-                        return richTextBlock.implicitHeight
-                      }
+                      height: modelData.kind === "code" ? codeCard.implicitHeight : richTextBlock.implicitHeight
 
-                      // Heading or Paragraph block
+                      // Unified selectable RichText block (headings, paragraphs, bullets all selectable together!)
                       TextEdit {
                         id: richTextBlock
-                        visible: modelData.kind === "paragraph" || modelData.kind === "heading"
+                        visible: modelData.kind !== "code"
                         width: parent.width
                         text: modelData.html
                         textFormat: TextEdit.RichText
                         readOnly: true
                         selectByMouse: true
-                        color: modelData.kind === "heading" ? Color.accent : root.fg
+                        color: root.bodyText
                         selectionColor: Color.accent
                         selectedTextColor: Color.background
                         font.family: root.face
-                        font.pixelSize: modelData.kind === "heading" ? Math.round(Style.font.body * 1.08) : Style.font.body
-                        font.bold: modelData.kind === "heading"
+                        font.pixelSize: Style.font.body
                         wrapMode: TextEdit.WordWrap
                         Keys.onEscapePressed: root.handleEscape()
-                      }
-
-                      // Bullet / numbered list item
-                      Row {
-                        id: bulletRow
-                        visible: modelData.kind === "bullet"
-                        width: parent.width
-                        spacing: Style.space(8)
-
-                        PlainText {
-                          text: modelData.marker
-                          color: Color.accent
-                          font.family: root.face
-                          font.pixelSize: Style.font.body
-                          font.bold: true
-                        }
-
-                        TextEdit {
-                          width: parent.width - Style.space(24)
-                          text: modelData.html
-                          textFormat: TextEdit.RichText
-                          readOnly: true
-                          selectByMouse: true
-                          color: root.fg
-                          selectionColor: Color.accent
-                          selectedTextColor: Color.background
-                          font.family: root.face
-                          font.pixelSize: Style.font.body
-                          wrapMode: TextEdit.WordWrap
-                          Keys.onEscapePressed: root.handleEscape()
-                        }
                       }
 
                       // Fenced Code Block with Syntax Highlighting + 1-click Copy button
@@ -3090,31 +4338,30 @@ Item {
                             PlainText {
                               anchors.left: parent.left
                               anchors.verticalCenter: parent.verticalCenter
-                              text: modelData.lang !== "" ? modelData.lang.toUpperCase() : "CODE"
+                              text: modelData.lang !== "" ? modelData.lang : "Code"
                               color: root.dim
                               font.family: root.face
-                              font.pixelSize: Math.max(9, Style.font.caption - 2)
+                              font.pixelSize: Style.font.caption
                               font.bold: true
-                              font.letterSpacing: 1.2
                             }
 
                             Rectangle {
                               anchors.right: parent.right
                               anchors.verticalCenter: parent.verticalCenter
-                              width: cpCodeLbl.implicitWidth + Style.space(12)
-                              height: Style.space(20)
+                              width: cpCodeLbl.implicitWidth + Style.space(10)
+                              height: Style.space(22)
                               radius: Style.space(5)
-                              color: cpCodeMouse.containsMouse ? root.surfaceHover : root.surface
+                              color: cpCodeMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025)
                               border.width: 1
-                              border.color: root.copiedBlockIdx === index ? root.colSuccess : root.line
+                              border.color: root.copiedBlockIdx === index ? root.colSuccess : Util.alpha(root.fg, 0.08)
 
                               PlainText {
                                 id: cpCodeLbl
                                 anchors.centerIn: parent
-                                text: root.copiedBlockIdx === index ? ("✓ " + root.t("copied")) : ("⎘ " + root.t("copy"))
+                                text: root.copiedBlockIdx === index ? root.t("copied") : root.t("copy")
                                 color: root.copiedBlockIdx === index ? root.colSuccess : root.fg
                                 font.family: root.face
-                                font.pixelSize: Math.max(9, Style.font.caption - 2)
+                                font.pixelSize: Style.font.caption
                               }
 
                               MouseArea {
@@ -3139,7 +4386,7 @@ Item {
                             selectionColor: Color.accent
                             selectedTextColor: Color.background
                             font.family: root.face
-                            font.pixelSize: Style.font.caption
+                            font.pixelSize: Style.font.body
                             wrapMode: TextEdit.WordWrap
                             Keys.onEscapePressed: root.handleEscape()
                           }
@@ -3151,7 +4398,7 @@ Item {
               }
             }
 
-            // 5b. SMART MODEL RECOMMENDATION BANNER (from Auto-analyze domain detection)
+            // 5b. SMART MODEL RECOMMENDATION BANNER
             Rectangle {
               id: recBanner
               visible: root.recommendedModelIdx >= 0 && root.recommendedModelIdx < root.modelChoices.length
@@ -3178,7 +4425,7 @@ Item {
                 }
                 PlainText {
                   text: root.recommendedCategoryLabel() + " — " + root.t("recSwitchTo") + " " + (root.recommendedModelIdx >= 0 ? (root.modelChoices[root.recommendedModelIdx].vendor + " " + root.modelChoices[root.recommendedModelIdx].label) : "")
-                  color: root.fg
+                  color: root.strongText
                   font.family: root.face
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -3218,138 +4465,8 @@ Item {
                 onContainsMouseChanged: root.setHover(recBanner, containsMouse, root.t("tipRecModel"))
                 onClicked: {
                   root.clearHover()
-                  if (root.recommendedModelIdx >= 0) root.pickModelAt(root.recommendedModelIdx)
-                }
-              }
-            }
-
-            // 6. AI SUGGESTIONS (✦) + USER PINNED PROMPTS (★)
-            Flow {
-              width: parent.width
-              spacing: Style.space(6)
-              visible: root.aiPrompts.length > 0 || root.customPrompts.length > 0
-
-              Repeater {
-                model: root.aiPrompts
-                delegate: Rectangle {
-                  id: aiChip
-                  required property string modelData
-                  readonly property bool isSelected: root.draft === modelData
-
-                  width: aiChipRow.implicitWidth + Style.space(18)
-                  height: Style.space(28)
-                  radius: height / 2
-                  color: isSelected ? root.surfaceActive : (aiChipMouse.containsMouse ? root.surfaceHover : Util.alpha(Color.accent, 0.08))
-                  border.width: 1
-                  border.color: Color.accent
-
-                  Row {
-                    id: aiChipRow
-                    anchors.centerIn: parent
-                    spacing: Style.space(4)
-
-                    PlainText {
-                      text: "✦"
-                      color: Color.accent
-                      font.family: root.face
-                      font.pixelSize: Style.font.caption
-                    }
-
-                    PlainText {
-                      text: modelData
-                      color: root.fg
-                      font.family: root.face
-                      font.pixelSize: Style.font.caption
-                      font.bold: true
-                    }
-                  }
-
-                  MouseArea {
-                    id: aiChipMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onContainsMouseChanged: root.setHover(aiChip, containsMouse, root.t("tipAiChip"))
-                    onClicked: {
-                      root.tooltipShown = false
-                      root.usePrompt(modelData)
-                    }
-                  }
-                }
-              }
-
-              Repeater {
-                model: root.customPrompts
-                delegate: Rectangle {
-                  id: customChip
-                  required property string modelData
-                  readonly property bool isSelected: root.draft === modelData
-
-                  width: Math.min(dock.width, customChipRow.implicitWidth + Style.space(16))
-                  height: Style.space(28)
-                  radius: height / 2
-                  color: isSelected ? Util.alpha(root.colSuccess, 0.2) : (customChipMouse.containsMouse ? root.surfaceHover : root.surface)
-                  border.width: 1
-                  border.color: isSelected ? root.colSuccess : (customChipMouse.containsMouse ? Util.alpha(root.fg, 0.35) : root.line)
-
-                  Row {
-                    id: customChipRow
-                    anchors.centerIn: parent
-                    spacing: Style.space(5)
-
-                    PlainText {
-                      text: "★"
-                      color: root.colSuccess
-                      font.family: root.face
-                      font.pixelSize: Style.font.caption
-                    }
-
-                    PlainText {
-                      text: modelData
-                      color: root.fg
-                      font.family: root.face
-                      font.pixelSize: Style.font.caption
-                      elide: Text.ElideRight
-                      width: Math.min(implicitWidth, dock.width - Style.space(48))
-                    }
-
-                    PlainText {
-                      text: "×"
-                      color: delMouse.containsMouse ? Color.urgent : root.dim
-                      font.family: root.face
-                      font.pixelSize: Style.font.body
-                      font.bold: true
-
-                      MouseArea {
-                        id: delMouse
-                        anchors.fill: parent
-                        anchors.margins: -4
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onContainsMouseChanged: root.setHover(customChip, containsMouse, root.t("tipCustomChip"))
-                        onClicked: {
-                          root.clearHover()
-                          root.removeCustomPrompt(modelData)
-                        }
-                      }
-                    }
-                  }
-
-                  MouseArea {
-                    id: customChipMouse
-                    anchors.left: parent.left
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: parent.width - Style.space(22)
-                    hoverEnabled: true
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    cursorShape: Qt.PointingHandCursor
-                    onContainsMouseChanged: root.setHover(customChip, containsMouse, root.t("tipCustomChip"))
-                    onClicked: function(mouse) {
-                      root.clearHover()
-                      if (mouse.button === Qt.RightButton) root.removeCustomPrompt(modelData)
-                      else root.usePrompt(modelData)
-                    }
+                  if (root.recommendedModelIdx >= 0) {
+                    root.pickModelAt(root.recommendedModelIdx)
                   }
                 }
               }
@@ -3370,15 +4487,15 @@ Item {
           anchors.bottomMargin: root.pad
           spacing: Style.space(8)
 
-          // 7. INPUT BAR
+          // 7. INPUT BAR (cleanly paired with chat answer above)
           Rectangle {
             id: inputBar
             width: parent.width
-            height: Style.space(44)
+            height: Style.space(42)
             radius: Style.space(10)
-            color: draftInput.activeFocus ? Util.alpha(root.fg, 0.06) : root.surface
-            border.width: draftInput.activeFocus ? 1.5 : 1
-            border.color: draftInput.activeFocus ? Color.accent : root.line
+            color: draftInput.activeFocus ? Util.alpha(root.fg, 0.06) : Util.alpha(root.fg, 0.03)
+            border.width: draftInput.activeFocus ? 1.2 : 1
+            border.color: draftInput.activeFocus ? Color.accent : Util.alpha(root.line, 0.4)
 
             PlainText {
               id: promptIcon
@@ -3398,7 +4515,7 @@ Item {
               anchors.right: inputActions.left
               anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              visible: draftInput.text.length === 0
+              visible: draftInput.text.length === 0 && !root.userTyped && root.answer === ""
               text: root.t("placeholder")
               color: root.dim
               font.family: root.face
@@ -3468,10 +4585,61 @@ Item {
               }
 
               NavButton {
+                visible: root.stage === "analysing"
                 anchors.verticalCenter: parent.verticalCenter
-                height: Style.space(30)
-                icon: "★"
-                label: root.isDocked ? "" : root.t("pin")
+                icon: ""
+                label: root.t("stop")
+                tip: root.t("tipStop")
+                danger: true
+                onPressed: root.stopAsk()
+              }
+
+              // System-tray EyeMark button to capture a new screenshot right into the active conversation
+              Rectangle {
+                id: inChatCaptureBtn
+                visible: root.stage !== "analysing"
+                width: Style.space(24)
+                height: Style.space(24)
+                anchors.verticalCenter: parent.verticalCenter
+                radius: Style.space(6)
+                color: inChatCapMouse.containsMouse
+                  ? root.surfaceHover
+                  : (root.pendingNewShot ? Util.alpha(Color.accent, 0.14) : Util.alpha(root.fg, 0.025))
+                border.width: 1
+                border.color: inChatCapMouse.containsMouse || root.pendingNewShot
+                  ? Color.accent
+                  : Util.alpha(root.fg, 0.08)
+
+                Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+                Behavior on border.color { ColorAnimation { duration: Style.duration(120) } }
+
+                EyeMark {
+                  anchors.centerIn: parent
+                  width: Style.space(15)
+                  height: Style.space(15)
+                  color: inChatCapMouse.containsMouse || root.pendingNewShot ? Color.accent : root.fg
+                  accentColor: Color.accent
+                  active: inChatCapMouse.containsMouse || root.pendingNewShot
+                }
+
+                MouseArea {
+                  id: inChatCapMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: root.setHover(inChatCaptureBtn, containsMouse, root.t("tipCaptureInChat"))
+                  onClicked: {
+                    root.tooltipShown = false
+                    root.runCaptureInChat()
+                  }
+                }
+              }
+
+              NavButton {
+                visible: root.stage !== "analysing" && !root.compactChatMode
+                anchors.verticalCenter: parent.verticalCenter
+                icon: ""
+                label: root.t("pin")
                 tip: root.t("tipPin")
                 active: root.draft.replace(/^\s+|\s+$/g, "").length > 0
                 customColor: root.colSuccess
@@ -3480,33 +4648,23 @@ Item {
 
               Rectangle {
                 id: sendBtn
-                readonly property bool canSend: root.draft.replace(/^\s+|\s+$/g, "").length > 0 && root.imagePath !== ""
-                width: sendRow.implicitWidth + Style.space(16)
-                height: Style.space(30)
+                readonly property bool canSend: (root.draft.replace(/^\s+|\s+$/g, "").length > 0 || root.pendingNewShot) && root.imagePath !== ""
+                width: sendLbl.implicitWidth + Style.space(12)
+                height: Style.space(24)
                 anchors.verticalCenter: parent.verticalCenter
-                radius: Style.space(7)
-                color: canSend ? (sendMouse.containsMouse ? Qt.lighter(Color.accent, 1.15) : Color.accent) : root.surface
+                radius: Style.space(6)
+                color: canSend ? (sendMouse.containsMouse ? Qt.lighter(Color.accent, 1.15) : Color.accent) : Util.alpha(root.fg, 0.025)
                 border.width: 1
-                border.color: canSend ? Color.accent : root.line
+                border.color: canSend ? Color.accent : Util.alpha(root.fg, 0.08)
 
-                Row {
-                  id: sendRow
+                PlainText {
+                  id: sendLbl
                   anchors.centerIn: parent
-                  spacing: Style.space(4)
-
-                  PlainText {
-                    text: root.t("send")
-                    color: parent.parent.canSend ? Color.background : root.dim
-                    font.family: root.face
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                  }
-                  PlainText {
-                    text: "↵"
-                    color: parent.parent.canSend ? Color.background : root.dim
-                    font.family: root.face
-                    font.pixelSize: Style.font.caption
-                  }
+                  text: root.t("send")
+                  color: parent.canSend ? Color.background : root.dim
+                  font.family: root.face
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
                 }
 
                 MouseArea {
@@ -3524,33 +4682,237 @@ Item {
             }
           }
 
-          // 8. FOOTER
+          // 8. CLEAN TEXT SUGGESTION CHIPS (LEFT) + COPY CHAT & HISTORY (RIGHT BELOW INPUT BAR)
           Item {
             width: parent.width
-            height: Style.space(18)
+            height: Math.max(chipsFlow.visible ? chipsFlow.implicitHeight : 0, bottomRightActions.height)
 
-            PlainText {
+            Flow {
+              id: chipsFlow
               anchors.left: parent.left
-              anchors.right: shortcutLegend.visible ? shortcutLegend.left : parent.right
-              anchors.rightMargin: shortcutLegend.visible ? Style.space(12) : 0
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.hoverTip !== "" ? ("ⓘ " + root.hoverTip) : (root.hint !== "" ? root.hint : root.t("defaultHint"))
-              color: root.hoverTip !== "" ? root.fg : root.dim
-              font.family: root.face
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
-              Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+              anchors.top: parent.top
+              width: Math.max(Style.space(100), parent.width - bottomRightActions.width - Style.space(8))
+              spacing: Style.space(5)
+              visible: root.aiPrompts.length > 0 || root.customPrompts.length > 0
+
+              Repeater {
+                model: root.aiPrompts
+                delegate: Rectangle {
+                  id: aiChip
+                  required property string modelData
+                  readonly property bool isSelected: root.draft === modelData
+
+                  width: aiChipLbl.implicitWidth + Style.space(10)
+                  height: Style.space(24)
+                  radius: Style.space(6)
+                  color: isSelected ? Util.alpha(Color.accent, 0.14) : (aiChipMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025))
+                  border.width: 1
+                  border.color: isSelected ? Util.alpha(Color.accent, 0.65) : (aiChipMouse.containsMouse ? Util.alpha(root.fg, 0.22) : Util.alpha(root.fg, 0.08))
+
+                  PlainText {
+                    id: aiChipLbl
+                    anchors.centerIn: parent
+                    text: modelData
+                    color: aiChipMouse.containsMouse || isSelected ? root.fg : Util.alpha(root.dim, 0.85)
+                    font.family: root.face
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    id: aiChipMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: root.setHover(aiChip, containsMouse, root.t("tipAiChip"))
+                    onClicked: {
+                      root.tooltipShown = false
+                      root.usePrompt(modelData)
+                    }
+                  }
+                }
+              }
+
+              Repeater {
+                model: root.customPrompts
+                delegate: Rectangle {
+                  id: customChip
+                  required property string modelData
+                  readonly property bool isSelected: root.draft === modelData
+
+                  width: Math.min(chipsFlow.width, customChipRow.implicitWidth + Style.space(10))
+                  height: Style.space(24)
+                  radius: Style.space(6)
+                  color: isSelected ? Util.alpha(root.colSuccess, 0.14) : (customChipMouse.containsMouse ? root.surfaceHover : Util.alpha(root.fg, 0.025))
+                  border.width: 1
+                  border.color: isSelected ? Util.alpha(root.colSuccess, 0.65) : (customChipMouse.containsMouse ? Util.alpha(root.fg, 0.22) : Util.alpha(root.fg, 0.08))
+
+                  Row {
+                    id: customChipRow
+                    anchors.centerIn: parent
+                    spacing: Style.space(5)
+
+                    PlainText {
+                      text: modelData
+                      color: customChipMouse.containsMouse || isSelected ? root.fg : Util.alpha(root.dim, 0.85)
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      width: Math.min(implicitWidth, chipsFlow.width - Style.space(34))
+                    }
+
+                    PlainText {
+                      text: "×"
+                      color: delMouse.containsMouse ? Color.urgent : Util.alpha(root.dim, 0.65)
+                      font.family: root.face
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+
+                      MouseArea {
+                        id: delMouse
+                        anchors.fill: parent
+                        anchors.margins: -4
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onContainsMouseChanged: root.setHover(customChip, containsMouse, root.t("tipCustomChip"))
+                        onClicked: {
+                          root.clearHover()
+                          root.removeCustomPrompt(modelData)
+                        }
+                      }
+                    }
+                  }
+
+                  MouseArea {
+                    id: customChipMouse
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: parent.width - Style.space(22)
+                    hoverEnabled: true
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    cursorShape: Qt.PointingHandCursor
+                    onContainsMouseChanged: root.setHover(customChip, containsMouse, root.t("tipCustomChip"))
+                    onClicked: function(mouse) {
+                      root.clearHover()
+                      if (mouse.button === Qt.RightButton) root.removeCustomPrompt(modelData)
+                      else root.usePrompt(modelData)
+                    }
+                  }
+                }
+              }
             }
 
-            PlainText {
-              id: shortcutLegend
-              visible: !root.isDocked
+            Row {
+              id: bottomRightActions
               anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              text: "↵ " + root.t("send") + "  ·  ★ " + root.t("pin") + "  ·  Esc"
-              color: Util.alpha(root.fg, 0.38)
-              font.family: root.face
-              font.pixelSize: Style.font.caption
+              anchors.top: parent.top
+              spacing: Style.space(5)
+
+              // Terminal CLI Agent handoff icon button
+              Rectangle {
+                id: cliIconBtn
+                visible: root.imagePath !== ""
+                width: Style.space(26)
+                height: Style.space(24)
+                radius: Style.space(6)
+                color: cliIconMouse.containsMouse
+                  ? root.surfaceHover
+                  : (root.systemDebug ? Util.alpha(Color.urgent, 0.14) : Util.alpha(root.fg, 0.025))
+                border.width: 1
+                border.color: cliIconMouse.containsMouse
+                  ? (root.systemDebug ? Color.urgent : Color.accent)
+                  : (root.systemDebug ? Util.alpha(Color.urgent, 0.65) : Util.alpha(root.fg, 0.08))
+
+                Behavior on color { ColorAnimation { duration: Style.duration(120) } }
+                Behavior on border.color { ColorAnimation { duration: Style.duration(120) } }
+
+                Canvas {
+                  id: cliLogoCanvas
+                  anchors.centerIn: parent
+                  width: Style.space(15)
+                  height: Style.space(13)
+                  property color strokeColor: root.systemDebug
+                    ? Color.urgent
+                    : (cliIconMouse.containsMouse ? Color.accent : root.fg)
+                  onStrokeColorChanged: requestPaint()
+                  onWidthChanged: requestPaint()
+                  onHeightChanged: requestPaint()
+                  onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.clearRect(0, 0, width, height)
+                    ctx.strokeStyle = strokeColor
+                    ctx.lineWidth = Math.max(1.3, width * 0.1)
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    // Rounded terminal frame
+                    var pad = 1.0
+                    var rw = width - pad * 2
+                    var rh = height - pad * 2
+                    var r = Math.min(2.6, rh * 0.25)
+                    ctx.beginPath()
+                    ctx.moveTo(pad + r, pad)
+                    ctx.lineTo(pad + rw - r, pad)
+                    ctx.quadraticCurveTo(pad + rw, pad, pad + rw, pad + r)
+                    ctx.lineTo(pad + rw, pad + rh - r)
+                    ctx.quadraticCurveTo(pad + rw, pad + rh, pad + rw - r, pad + rh)
+                    ctx.lineTo(pad + r, pad + rh)
+                    ctx.quadraticCurveTo(pad, pad + rh, pad, pad + rh - r)
+                    ctx.lineTo(pad, pad + r)
+                    ctx.quadraticCurveTo(pad, pad, pad + r, pad)
+                    ctx.closePath()
+                    ctx.stroke()
+                    // Prompt chevron ">"
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.26, height * 0.34)
+                    ctx.lineTo(width * 0.46, height * 0.52)
+                    ctx.lineTo(width * 0.26, height * 0.70)
+                    ctx.stroke()
+                    // Prompt cursor "_"
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.54, height * 0.68)
+                    ctx.lineTo(width * 0.76, height * 0.68)
+                    ctx.stroke()
+                  }
+                }
+
+                MouseArea {
+                  id: cliIconMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: root.setHover(cliIconBtn, containsMouse, root.systemDebug ? root.t("tipFixCli") : root.t("tipCli"))
+                  onClicked: {
+                    root.tooltipShown = false
+                    root.openTerminal()
+                  }
+                }
+              }
+
+              NavButton {
+                visible: root.answer !== "" || root.chatHistory.length > 0
+                icon: ""
+                label: root.copiedChatFeedback
+                  ? root.t("copied")
+                  : (root.selectedTurns.length > 0
+                      ? (root.t("copySelected") + " · " + root.selectedTurns.length)
+                      : root.t("copyChat"))
+                tip: root.t("tipCopyChat")
+                active: root.copiedChatFeedback || root.selectedTurns.length > 0
+                customColor: root.copiedChatFeedback ? root.colSuccess : Color.accent
+                onPressed: root.copyFullChat()
+              }
+
+              NavButton {
+                icon: ""
+                label: root.t("historyBtn") + (root.sessionHistory.length > 0 ? (" · " + root.sessionHistory.length) : "")
+                tip: root.t("tipHistory")
+                active: root.historyDrawerOpen
+                customColor: Color.accent
+                onPressed: {
+                  root.historyDrawerOpen = !root.historyDrawerOpen
+                  root.modelPickerOpen = false
+                }
+              }
             }
           }
         }
@@ -3580,6 +4942,254 @@ Item {
             font.family: root.face
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
+          }
+        }
+      }
+    }
+  }
+
+  // STEALTH MODE CHECK-CARD POPUP (shows answer + Open Main HUD button + X to dismiss)
+  PanelWindow {
+    id: stealthWin
+    visible: root.stealthPopupOpen && !root.windowOpen
+    anchors.top: true
+    anchors.bottom: true
+    anchors.left: true
+    anchors.right: true
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "aeye-stealth"
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+    Region {
+      id: stealthMask
+      item: root.stealthPopupOpen && !root.windowOpen ? stealthCard : null
+    }
+    mask: stealthMask
+
+    Item {
+      anchors.fill: parent
+
+      Rectangle {
+        id: stealthCard
+        width: Math.min(parent.width - Style.space(32), Style.space(420))
+        height: Math.min(Style.space(340), stealthHeader.height + Style.space(20) + Math.min(Style.space(210), stealthText.implicitHeight + Style.space(12)) + stealthFooter.height + root.pad * 2)
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.bottomMargin: Style.space(18)
+        anchors.rightMargin: Style.space(16)
+        radius: root.radius
+        color: Util.alpha(root.bg, 0.97)
+        border.width: 1.5
+        border.color: root.stealthPopupError ? Color.urgent : root.colSuccess
+        clip: true
+
+        // Top header: checkmark + logo + model + X close button
+        Item {
+          id: stealthHeader
+          anchors.top: parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.topMargin: Style.space(12)
+          anchors.leftMargin: Style.space(14)
+          anchors.rightMargin: Style.space(12)
+          height: Style.space(28)
+
+          Row {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(7)
+
+            Rectangle {
+              width: Style.space(20)
+              height: Style.space(20)
+              radius: width / 2
+              anchors.verticalCenter: parent.verticalCenter
+              color: Util.alpha(root.stealthPopupError ? Color.urgent : root.colSuccess, 0.2)
+              border.width: 1
+              border.color: root.stealthPopupError ? Color.urgent : root.colSuccess
+              PlainText {
+                anchors.centerIn: parent
+                text: root.stealthPopupError ? "!" : "✓"
+                color: root.stealthPopupError ? Color.urgent : root.colSuccess
+                font.family: root.face
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+            }
+
+            EyeMark {
+              width: Style.space(18)
+              height: Style.space(18)
+              anchors.verticalCenter: parent.verticalCenter
+              color: root.fg
+              accentColor: Color.accent
+              readyColor: root.colSuccess
+              active: true
+            }
+
+            Row {
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 0
+
+              PlainText {
+                text: "A"
+                color: Color.accent
+                font.family: root.face
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+
+              PlainText {
+                text: "eye"
+                color: root.fg
+                font.family: root.face
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+            }
+
+            PlainText {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "· " + root.modelLabel
+              color: root.dim
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Rectangle {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(24)
+            height: Style.space(24)
+            radius: Style.space(6)
+            color: stealthCloseMouse.containsMouse ? Util.alpha(Color.urgent, 0.22) : root.surface
+            border.width: 1
+            border.color: stealthCloseMouse.containsMouse ? Color.urgent : root.line
+
+            PlainText {
+              anchors.centerIn: parent
+              text: "✕"
+              color: stealthCloseMouse.containsMouse ? Color.urgent : root.fg
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            MouseArea {
+              id: stealthCloseMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.stealthPopupOpen = false
+            }
+          }
+        }
+
+        // Scrollable answer body
+        Flickable {
+          id: stealthScroll
+          anchors.top: stealthHeader.bottom
+          anchors.topMargin: Style.space(10)
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.leftMargin: Style.space(14)
+          anchors.rightMargin: Style.space(14)
+          anchors.bottom: stealthFooter.top
+          anchors.bottomMargin: Style.space(10)
+          contentWidth: width
+          contentHeight: stealthText.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height + 2
+
+          TextEdit {
+            id: stealthText
+            width: stealthScroll.width
+            text: root.formatInlineHtml(root.stealthPopupAnswer).replace(/\n/g, "<br/>")
+            textFormat: TextEdit.RichText
+            readOnly: true
+            selectByMouse: true
+            color: root.bodyText
+            selectionColor: Color.accent
+            selectedTextColor: Color.background
+            font.family: root.face
+            font.pixelSize: Style.font.body
+            wrapMode: TextEdit.WordWrap
+          }
+        }
+
+        // Footer: Open Main HUD + Copy
+        Row {
+          id: stealthFooter
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          anchors.margins: Style.space(12)
+          height: Style.space(30)
+          spacing: Style.space(8)
+
+          Rectangle {
+            width: parent.width - stealthCopyBtn.width - Style.space(8)
+            height: parent.height
+            radius: Style.space(7)
+            color: stealthOpenMouse.containsMouse ? Qt.lighter(Color.accent, 1.1) : Color.accent
+
+            PlainText {
+              anchors.centerIn: parent
+              text: "◫  " + root.t("openMainHud")
+              color: Color.background
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            MouseArea {
+              id: stealthOpenMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.stealthPopupOpen = false
+                root.showWindow()
+              }
+            }
+          }
+
+          Rectangle {
+            id: stealthCopyBtn
+            width: stealthCopyLbl.implicitWidth + Style.space(20)
+            height: parent.height
+            radius: Style.space(7)
+            color: stealthCopyMouse.containsMouse ? root.surfaceHover : root.surface
+            border.width: 1
+            border.color: root.copiedFeedback ? root.colSuccess : root.line
+
+            PlainText {
+              id: stealthCopyLbl
+              anchors.centerIn: parent
+              text: root.copiedFeedback ? ("✓ " + root.t("copied")) : ("⎘ " + root.t("copy"))
+              color: root.copiedFeedback ? root.colSuccess : root.fg
+              font.family: root.face
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            MouseArea {
+              id: stealthCopyMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                if (copyProc.running) copyProc.running = false
+                copyProc.command = [binPath(), "copy", root.stealthPopupAnswer]
+                copyProc.running = true
+                root.copiedFeedback = true
+                copyResetTimer.restart()
+              }
+            }
           }
         }
       }

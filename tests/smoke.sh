@@ -13,7 +13,7 @@ echo "Running Aeye smoke tests in $ROOT"
 
 # 1. Shell & Python syntax
 bash -n "$ROOT/bin/aeye" && ok "bash -n bin/aeye" || fail "bash -n bin/aeye"
-python3 -B -m py_compile "$ROOT/bin/vision_api.py" "$ROOT/bin/annotate.py" "$ROOT/bin/extract.py" "$ROOT/bin/stream_parser.py" "$ROOT/bin/export_file.py" \
+python3 -B -m py_compile "$ROOT/bin/vision_api.py" "$ROOT/bin/annotate.py" "$ROOT/bin/extract.py" "$ROOT/bin/stream_parser.py" "$ROOT/bin/export_file.py" "$ROOT/bin/list_models.py" \
   && ok "python3 py_compile bin/*.py" || fail "python3 py_compile bin/*.py"
 
 # 2. Manifest & Omarchy plugin validator
@@ -94,6 +94,37 @@ if [[ $sysdbg_out == *"=== SYSTEM ==="* && $sysdbg_bytes -le 8200 && $sysdbg_out
   ok "sysdebug-preview bounded (${sysdbg_bytes}B), read-only, zero env leaks"
 else
   fail "sysdebug-preview failed safety/bound check (${sysdbg_bytes}B)"
+fi
+
+# 8b. AI Context (.md + note) & sensitive file guard + live models discovery
+ctx_md="$tmp_dir/context-smoke.md"
+printf '# Smoke Context\nPrefer concise answers.\n' >"$ctx_md"
+ctx_out="$("$ROOT/bin/aeye" context-preview "Custom note rule" "$ctx_md")"
+if [[ $ctx_out == *"Custom note rule"* && $ctx_out == *"Prefer concise answers."* ]]; then
+  ok "context-preview merges custom note and .md file"
+else
+  fail "context-preview failed to merge note and .md"
+fi
+
+ctx_guard="$("$ROOT/bin/aeye" context-preview "" "$HOME/.config/omarchy/aeye-keys.json")"
+if [[ -z $ctx_guard ]]; then
+  ok "context-preview blocks reading aeye-keys.json"
+else
+  fail "context-preview leaked aeye-keys.json"
+fi
+
+if "$ROOT/bin/aeye" models --lang en | jq -e '.gemini and .anthropic and .xai and .openai and (.gemini | length > 0) and (.xai | length > 0)' >/dev/null; then
+  ok "aeye models catalog contract (4 vendors with hover details)"
+else
+  fail "aeye models catalog contract failed"
+fi
+
+amem_out="$("$ROOT/bin/aeye" memory-preview)"
+amem_bytes="${#amem_out}"
+if [[ $amem_bytes -le 4200 ]]; then
+  ok "aeye memory-preview bounded (${amem_bytes}B), read-only"
+else
+  fail "aeye memory-preview exceeded 4KB bound (${amem_bytes}B)"
 fi
 
 # 9. QML compliance checks (PlainText, Style.duration, zero hardcoded UI chrome hex colors)

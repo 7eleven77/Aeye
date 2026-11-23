@@ -1,10 +1,47 @@
 #!/usr/bin/env python3
-"""Render normalized arrow/box annotations onto an image using ImageMagick."""
+"""Render normalized arrow/box annotations onto an image using ImageMagick.
+
+Reads image dimensions directly from the file header (PNG/JPEG/WebP or PIL)
+to avoid spawning a separate `magick identify` subprocess, and supports writing
+directly to an output path so `aeye ask` avoids an extra file copy.
+"""
 
 import json
 import math
+import struct
 import subprocess
 import sys
+
+
+def read_image_dimensions(path: str) -> tuple[float, float]:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(32)
+        # Fast-path PNG header (IHDR width/height at bytes 16..24)
+        if len(head) >= 24 and head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+            w, h = struct.unpack(">II", head[16:24])
+            if w > 0 and h > 0:
+                return float(w), float(h)
+    except Exception:
+        pass
+
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+            if w > 0 and h > 0:
+                return float(w), float(h)
+    except Exception:
+        pass
+
+    dim_out = subprocess.check_output(
+        ["magick", "identify", "-format", "%w %h", path],
+        text=True,
+    ).strip()
+    parts = dim_out.split()
+    if len(parts) < 2:
+        return 0.0, 0.0
+    return float(parts[0]), float(parts[1])
 
 
 def main():
@@ -12,6 +49,7 @@ def main():
         sys.exit(0)
     image_path = sys.argv[1]
     raw_marks = sys.argv[2].strip()
+    out_path = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else image_path
     if not raw_marks or raw_marks == "[]":
         sys.exit(0)
     try:
@@ -21,14 +59,7 @@ def main():
     if not isinstance(marks, list) or not marks:
         sys.exit(0)
 
-    dim_out = subprocess.check_output(
-        ["magick", "identify", "-format", "%w %h", image_path],
-        text=True,
-    ).strip()
-    parts = dim_out.split()
-    if len(parts) < 2:
-        sys.exit(0)
-    width, height = float(parts[0]), float(parts[1])
+    width, height = read_image_dimensions(image_path)
     if width <= 0 or height <= 0:
         sys.exit(0)
 
@@ -88,7 +119,7 @@ def main():
             ]
 
     if len(args) > 2:
-        args.append(image_path)
+        args.append(out_path)
         subprocess.check_call(args)
 
 

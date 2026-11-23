@@ -1,41 +1,5 @@
-<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#101a36"/>
-      <stop offset="1" stop-color="#060b1c"/>
-    </linearGradient>
-    <radialGradient id="orb" cx="42%" cy="38%" r="70%">
-      <stop offset="0" stop-color="#6aa8ff" stop-opacity="0.95"/>
-      <stop offset="0.55" stop-color="#2f6bff" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#2a1a8f" stop-opacity="0.95"/>
-    </radialGradient>
-    <radialGradient id="iris" cx="55%" cy="62%" r="60%">
-      <stop offset="0" stop-color="#19f0ff"/>
-      <stop offset="0.6" stop-color="#1d8bff"/>
-      <stop offset="1" stop-color="#4b3bd6"/>
-    </radialGradient>
-    <radialGradient id="pupil" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#050a1a"/>
-      <stop offset="1" stop-color="#0a1230"/>
-    </radialGradient>
-    <linearGradient id="rim" x1="0.15" y1="1" x2="0.95" y2="0">
-      <stop offset="0" stop-color="#8fd8ff" stop-opacity="0.55"/>
-      <stop offset="0.6" stop-color="#bfe6ff" stop-opacity="0.35"/>
-      <stop offset="1" stop-color="#ffd98a" stop-opacity="1"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#2f8bff" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="#2f8bff" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="blur"><feGaussianBlur stdDeviation="1.6"/></filter>
-  </defs>
-  <rect x="4" y="4" width="92" height="92" rx="23" fill="url(#bg)" stroke="#2a3a66" stroke-width="1"/>
-  <circle cx="50" cy="50" r="44" fill="url(#glow)"/>
-  <circle cx="50" cy="50" r="32" fill="url(#orb)"/>
-  <path d="M18.5 50C30 36 40 31 50 31C60 31 70 36 81.5 50C70 64 60 69 50 69C40 69 30 64 18.5 50Z" fill="#9fd8ff" fill-opacity="0.22" stroke="#cfeaff" stroke-opacity="0.45" stroke-width="0.8"/>
-  <circle cx="50" cy="50" r="19" fill="url(#iris)"/>
-  <circle cx="50" cy="50" r="10.5" fill="url(#pupil)"/>
-  <circle cx="50" cy="50" r="32" fill="none" stroke="url(#rim)" stroke-width="1.6"/>
-  <path d="M50 41.5L52.2 47.8L58.5 50L52.2 52.2L50 58.5L47.8 52.2L41.5 50L47.8 47.8Z" fill="#fff"/>
-  <ellipse cx="40" cy="36" rx="10" ry="4.5" fill="#fff" fill-opacity="0.18" transform="rotate(-28 40 36)" filter="url(#blur)"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80.00 80.00" width="80.00" height="80.00" fill="none">
+<rect width="80" height="80" rx="16" fill="#121212"/><g transform="translate(5.6 5.6) scale(0.86)"><path d="M 7.20 25.20 V 7.20 H 25.20 M 54.80 7.20 H 72.80 V 25.20 M 7.20 54.80 V 72.80 H 25.20 M 54.80 72.80 H 72.80 V 54.80" fill="none" stroke="#f3f0e8" stroke-width="6.2" stroke-linecap="square" stroke-linejoin="miter"/><path fill="#f3f0e8" d="M 62.40 41.50 L 62.39 41.33 L 62.36 41.11 L 62.30 40.86 L 62.22 40.59 L 62.13 40.32 L 62.01 40.03 L 61.86 39.73 L 61.70 39.43 L 61.52 39.12 L 61.31 38.80 L 61.09 38.49 L 60.84 38.17 L 60.57 37.84 L 60.29 37.52 L 59.98 37.20 L 59.66 36.87 L 59.32 36.55 L 58.96 36.23 L 58.58 35.91 L 58.19 35.59 L 57.78 35.27 L 57.35 34.96 L 56.91 34.66 L 56.45 34.35 L 55.99 34.05 L 55.50 33.76 L 55.01 33.47 L 54.50 33.19 L 53.98 32.92 L 53.45 32.65 L 52.91 32.39 L 52.36 32.14 L 51.81 31.89 L 51.25 31.66 L 50.68 31.43 L 50.10 31.21 L 49.52 31.00 L 48.94 30.81 L 48.36 30.62 L 47.77 30.44 L 47.19 30.27 L 46.60 30.11 L 46.02 29.96 L 45.44 29.83 L 44.87 29.70 L 44.30 29.59 L 43.74 29.49 L 43.19 29.40 L 42.66 29.32 L 42.14 29.25 L 41.64 29.20 L 41.16 29.15 L 40.71 29.12 L 40.31 29.11 L 40.00 29.10 L 39.69 29.11 L 39.29 29.12 L 38.84 29.15 L 38.36 29.20 L 37.86 29.25 L 37.34 29.32 L 36.81 29.40 L 36.26 29.49 L 35.70 29.59 L 35.13 29.70 L 34.56 29.83 L 33.98 29.96 L 33.40 30.11 L 32.81 30.27 L 32.23 30.44 L 31.64 30.62 L 31.06 30.81 L 30.48 31.00 L 29.90 31.21 L 29.32 31.43 L 28.75 31.66 L 28.19 31.89 L 27.64 32.14 L 27.09 32.39 L 26.55 32.65 L 26.02 32.92 L 25.50 33.19 L 24.99 33.47 L 24.50 33.76 L 24.01 34.05 L 23.55 34.35 L 23.09 34.66 L 22.65 34.96 L 22.22 35.27 L 21.81 35.59 L 21.42 35.91 L 21.04 36.23 L 20.68 36.55 L 20.34 36.87 L 20.02 37.20 L 19.71 37.52 L 19.43 37.84 L 19.16 38.17 L 18.91 38.49 L 18.69 38.80 L 18.48 39.12 L 18.30 39.43 L 18.14 39.73 L 17.99 40.03 L 17.87 40.32 L 17.78 40.59 L 17.70 40.86 L 17.64 41.11 L 17.61 41.33 L 17.60 41.50 L 17.61 41.63 L 17.64 41.79 L 17.70 41.98 L 17.78 42.17 L 17.87 42.38 L 17.99 42.59 L 18.14 42.81 L 18.30 43.04 L 18.48 43.27 L 18.69 43.50 L 18.91 43.74 L 19.16 43.97 L 19.43 44.21 L 19.71 44.45 L 20.02 44.69 L 20.34 44.93 L 20.68 45.17 L 21.04 45.41 L 21.42 45.65 L 21.81 45.89 L 22.22 46.12 L 22.65 46.35 L 23.09 46.58 L 23.55 46.80 L 24.01 47.02 L 24.50 47.24 L 24.99 47.45 L 25.50 47.66 L 26.02 47.87 L 26.55 48.07 L 27.09 48.26 L 27.64 48.45 L 28.19 48.63 L 28.75 48.80 L 29.32 48.97 L 29.90 49.13 L 30.48 49.29 L 31.06 49.43 L 31.64 49.58 L 32.23 49.71 L 32.81 49.83 L 33.40 49.95 L 33.98 50.06 L 34.56 50.16 L 35.13 50.25 L 35.70 50.34 L 36.26 50.41 L 36.81 50.48 L 37.34 50.54 L 37.86 50.59 L 38.36 50.63 L 38.84 50.66 L 39.29 50.68 L 39.69 50.70 L 40.00 50.70 L 40.31 50.70 L 40.71 50.68 L 41.16 50.66 L 41.64 50.63 L 42.14 50.59 L 42.66 50.54 L 43.19 50.48 L 43.74 50.41 L 44.30 50.34 L 44.87 50.25 L 45.44 50.16 L 46.02 50.06 L 46.60 49.95 L 47.19 49.83 L 47.77 49.71 L 48.36 49.58 L 48.94 49.43 L 49.52 49.29 L 50.10 49.13 L 50.68 48.97 L 51.25 48.80 L 51.81 48.63 L 52.36 48.45 L 52.91 48.26 L 53.45 48.07 L 53.98 47.87 L 54.50 47.66 L 55.01 47.45 L 55.50 47.24 L 55.99 47.02 L 56.45 46.80 L 56.91 46.58 L 57.35 46.35 L 57.78 46.12 L 58.19 45.89 L 58.58 45.65 L 58.96 45.41 L 59.32 45.17 L 59.66 44.93 L 59.98 44.69 L 60.29 44.45 L 60.57 44.21 L 60.84 43.97 L 61.09 43.74 L 61.31 43.50 L 61.52 43.27 L 61.70 43.04 L 61.86 42.81 L 62.01 42.59 L 62.13 42.38 L 62.22 42.17 L 62.30 41.98 L 62.36 41.79 L 62.39 41.63 Z"/><path fill="#e68e0d" d="M 33.85 40.80 A 6.15 6.15 0 1 0 46.15 40.80 A 6.15 6.15 0 1 0 33.85 40.80 Z"/>
+</g>
 </svg>
