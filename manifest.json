@@ -6,7 +6,7 @@
   "author": "7eleven77",
   "license": "MIT",
   "homepage": "https://github.com/7eleven77/Aeye",
-  "description": "Native AI vision HUD, animated top-bar hub, and screenshot assistant for Omarchy. Point at anything on screen, annotate inline, stream live visual reasoning, tile natively in Hyprland, export answers to .txt/.md/.pdf/.html/.json, and run opt-in read-only system diagnostics.",
+  "description": "Instant AI screenshot, inline annotation, and vision overlay for Omarchy.",
   "kinds": ["panel", "bar-widget", "service"],
   "keepLoaded": true,
   "entryPoints": {
