@@ -3752,10 +3752,15 @@ Item {
                       height: Style.space(22)
 
                       Row {
+                        id: pastAiHeaderLeft
                         anchors.left: parent.left
+                        anchors.right: pastAiHeaderRight.left
+                        anchors.rightMargin: Style.space(8)
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Style.space(6)
+                        clip: true
                         PlainText {
+                          id: pastAiModelLbl
                           text: modelData.model || (root.producerName + " " + root.modelLabel)
                           color: root.dim
                           font.family: root.face
@@ -3764,14 +3769,17 @@ Item {
                         }
                         PlainText {
                           visible: (modelData.handoffFrom || "") !== ""
+                          width: Math.max(0, pastAiHeaderLeft.width - pastAiModelLbl.implicitWidth - Style.space(6))
                           text: "· " + root.t("handoffFrom") + " " + (modelData.handoffFrom || "")
                           color: Color.accent
                           font.family: root.face
                           font.pixelSize: Math.max(9, Style.font.caption - 1)
+                          elide: Text.ElideRight
                         }
                       }
 
                       Row {
+                        id: pastAiHeaderRight
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Style.space(4)
@@ -4044,11 +4052,16 @@ Item {
                   height: Style.space(24)
 
                   Row {
+                    id: ansHeaderLeft
                     anchors.left: parent.left
+                    anchors.right: ansHeaderRight.left
+                    anchors.rightMargin: Style.space(8)
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Style.space(6)
+                    clip: true
 
                     PlainText {
+                      id: ansModelLbl
                       text: root.producerName + " " + root.modelLabel
                       color: root.colSuccess
                       font.family: root.face
@@ -4057,14 +4070,17 @@ Item {
                     }
                     PlainText {
                       visible: root.handoffFromLabel !== ""
+                      width: Math.max(0, ansHeaderLeft.width - ansModelLbl.implicitWidth - Style.space(6))
                       text: "· " + root.t("handoffFrom") + " " + root.handoffFromLabel
                       color: Color.accent
                       font.family: root.face
                       font.pixelSize: Math.max(9, Style.font.caption - 1)
+                      elide: Text.ElideRight
                     }
                   }
 
                   Row {
+                    id: ansHeaderRight
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Style.space(4)
