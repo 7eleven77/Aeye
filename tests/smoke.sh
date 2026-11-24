@@ -146,6 +146,34 @@ else
   ok "Zero hardcoded UI chrome hex colors in BarWidget/Service"
 fi
 
+# 10. Marketplace security baseline & review regression checks
+if grep -rn -iE '\b(sudo|pkexec|doas|systemctl)\b' "$ROOT/Panel.qml" "$ROOT/BarWidget.qml" "$ROOT/Service.qml" "$ROOT/bin/" "$ROOT/README.md" >/dev/null; then
+  fail "Privilege or service-management baseline token found in runtime/docs"
+else
+  ok "Zero privilege (sudo/pkexec) or service-management (systemctl) baseline tokens"
+fi
+
+if grep -q 'find_new_screenshot' "$ROOT/bin/aeye"; then
+  fail "Shared Pictures fallback (find_new_screenshot) still present in bin/aeye"
+elif grep -q 'capture_region_isolated' "$ROOT/bin/aeye"; then
+  ok "Region capture isolated in 0700 runtime staging dir (no shared Pictures scan)"
+else
+  fail "capture_region_isolated missing in bin/aeye"
+fi
+
+if grep -q 'if (cropProc.running)' "$ROOT/Panel.qml"; then
+  ok "Panel.qml blocks sendDraft/launch while cropProc is running"
+else
+  fail "Panel.qml missing cropProc.running race guard"
+fi
+
+api_isolation_out="$(XDG_CONFIG_HOME="$tmp_dir/empty_cfg" ANTHROPIC_API_KEY="" GEMINI_API_KEY="" XAI_API_KEY="" OPENAI_API_KEY="" "$ROOT/bin/aeye" ask --image "$tmp_dir/test.png" --provider agy --model claude-sonnet-5-5-medium --auth-mode api --mode read 2>&1 || true)"
+if [[ $api_isolation_out == *"ERR	API authentication selected"* ]]; then
+  ok "Explicit API mode never falls back to CLI session on missing/failed API auth"
+else
+  fail "Explicit API mode did not enforce strict boundary ($api_isolation_out)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

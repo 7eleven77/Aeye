@@ -132,7 +132,7 @@ Aeye automatically detects existing Omarchy CLI auth (`agy`, `claude`, `grok`) a
 
 - **Isolated `0700` runtime sandbox:** Each request copies only `shot.png` (and `sysdebug.txt` if enabled) into a private `0700` dir under `$XDG_RUNTIME_DIR/aeye` — models never execute inside `$HOME`.
 - **Key storage & redaction:** Manual keys are stored with `chmod 600` in `~/.config/omarchy/aeye-keys.json`. Tokens (`sk-*`, `xai-*`, `AIza*`, `Bearer *`) are redacted from previews, and `.md` loading blocks sensitive paths (`.ssh`, `.gnupg`, `.env`, `aeye-keys.json`).
-- **Opt-in read-only System Debug:** Off by default. When enabled in `⚙ Options`, attaches a bounded (~8 KB) read-only snapshot (`uname`, `hyprctl`, failed `systemd` units, recent unprivileged `journalctl` errors, `free`/`df`) and highlights the `>_` terminal button. Never runs `sudo`, never dumps env vars, and never executes commands automatically.
+- **Opt-in read-only System Debug:** Off by default. When enabled in `⚙ Options`, attaches a bounded (~8 KB) read-only snapshot (`uname`, `hyprctl`, recent unprivileged `journalctl` errors, `free`/`df`) and highlights the `>_` terminal button. Runs strictly unprivileged, never dumps env vars, and never executes commands automatically.
 
 </details>
 

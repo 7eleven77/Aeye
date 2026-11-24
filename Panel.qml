@@ -95,6 +95,7 @@ Item {
   property int copiedTurnIdx: -1
   property bool copiedChatFeedback: false
   property bool pendingSendAfterCrop: false
+  property bool cropSucceeded: false
   property string lastSaveDir: "~/Documents"
   property bool saveDrawerOpen: false
   property string savePathText: ""
@@ -1325,7 +1326,7 @@ Item {
     var colStr = colorCss(root.colSuccess)
     var colNum = colorCss(root.colAnalysing)
     var colCom = colorCss(root.dim)
-    var kwRe = /^(const|let|var|function|async|await|return|if|else|elif|for|while|switch|case|break|continue|import|export|from|default|class|extends|new|try|catch|except|finally|throw|raise|def|lambda|pass|with|as|in|not|and|or|true|false|null|undefined|None|True|False|local|then|fi|do|done|esac|echo|printf|sudo|git|npm|pnpm|python3|bash|omarchy|property|readonly|signal|component)$/
+    var kwRe = /^(const|let|var|function|async|await|return|if|else|elif|for|while|switch|case|break|continue|import|export|from|default|class|extends|new|try|catch|except|finally|throw|raise|def|lambda|pass|with|as|in|not|and|or|true|false|null|undefined|None|True|False|local|then|fi|do|done|esac|echo|printf|git|npm|pnpm|python3|bash|omarchy|property|readonly|signal|component)$/
     var lines = String(rawCode || "").split("\n")
     var outLines = []
 
@@ -1633,7 +1634,7 @@ Item {
   }
 
   function applyCrop() {
-    if (!cropNorm || !imagePath) return
+    if (!cropNorm || !imagePath || cropProc.running) return
     var area = imageContent()
     var x1 = Math.min(cropNorm.x1, cropNorm.x2)
     var y1 = Math.min(cropNorm.y1, cropNorm.y2)
@@ -1643,6 +1644,7 @@ Item {
     var y = Math.round(y1 * area.sh)
     var w = Math.max(1, Math.round((x2 - x1) * area.sw))
     var h = Math.max(1, Math.round((y2 - y1) * area.sh))
+    cropSucceeded = false
     cropProc.command = [binPath(), "crop", imagePath, w + "x" + h + "+" + x + "+" + y]
     cropProc.running = true
   }
@@ -1652,6 +1654,7 @@ Item {
     if (text.indexOf("OK\t") === 0) {
       var outPath = text.substring(3)
       if (outPath.length > 0) {
+        cropSucceeded = true
         imagePath = outPath
         marks = []
         cropNorm = null
@@ -1667,6 +1670,7 @@ Item {
       return
     }
     if (text.indexOf("ERR\t") === 0) {
+      cropSucceeded = false
       pendingSendAfterCrop = false
       errorText = text.substring(4)
     }
@@ -1843,6 +1847,7 @@ Item {
   }
 
   function launch(mode, follow, prior, imageOverride) {
+    if (cropProc.running || cropNorm !== null) return
     var image = imageOverride || imagePath
     if (!image) return
     generation += 1
@@ -1907,6 +1912,7 @@ Item {
   }
 
   function startRead() {
+    if (cropProc.running || cropNorm !== null) return
     launch("read", "", "")
     busy = false
   }
@@ -1917,8 +1923,13 @@ Item {
       question = t("newShotPrompt")
     }
     if (question.length === 0 || !imagePath) return
+    // If a crop is currently running, queue send until the cropped file is ready
+    if (cropProc.running) {
+      pendingSendAfterCrop = true
+      return
+    }
     // If user drew a Crop box and pressed Send before clicking Apply Crop, apply it automatically first
-    if (cropNorm !== null && !cropProc.running) {
+    if (cropNorm !== null) {
       pendingSendAfterCrop = true
       applyCrop()
       return
@@ -2508,6 +2519,12 @@ Item {
   Process {
     id: cropProc
     stdout: SplitParser { onRead: function(line) { root.onCropLine(line) } }
+    onExited: function(exitCode) {
+      if (!root.cropSucceeded) {
+        root.pendingSendAfterCrop = false
+        if (root.errorText === "") root.errorText = "Crop failed"
+      }
+    }
   }
 
   Process {
@@ -4664,7 +4681,7 @@ Item {
 
               Rectangle {
                 id: sendBtn
-                readonly property bool canSend: (root.draft.replace(/^\s+|\s+$/g, "").length > 0 || root.pendingNewShot) && root.imagePath !== ""
+                readonly property bool canSend: (root.draft.replace(/^\s+|\s+$/g, "").length > 0 || root.pendingNewShot) && root.imagePath !== "" && !cropProc.running
                 width: sendLbl.implicitWidth + Style.space(12)
                 height: Style.space(24)
                 anchors.verticalCenter: parent.verticalCenter

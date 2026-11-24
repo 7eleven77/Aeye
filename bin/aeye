@@ -167,7 +167,7 @@ cmd_config_patch() {
 
 collect_sysdebug_context() {
   # Strictly read-only, bounded (~8 KB) system diagnostics snapshot.
-  # Never invokes sudo/pkexec, never dumps env vars, never reads keys or ~/.config.
+  # Runs unprivileged only: never elevates permissions, never dumps env vars, never reads keys or ~/.config.
   {
     printf '=== SYSTEM ===\n'
     uname -srmo 2>/dev/null || true
@@ -184,10 +184,6 @@ collect_sysdebug_context() {
       printf '\n=== HYPRLAND MONITORS ===\n'
       hyprctl monitors 2>/dev/null | grep -E '^(Monitor|	[0-9]+x[0-9]+|	scale:|	active workspace:)' | head -n 12 || true
     fi
-
-    printf '\n=== FAILED SYSTEMD UNITS ===\n'
-    systemctl --user --failed --no-legend --plain 2>/dev/null | head -n 12 || true
-    systemctl --failed --no-legend --plain 2>/dev/null | head -n 12 || true
 
     printf '\n=== RECENT USER JOURNAL ERRORS/WARNINGS (last 10m) ===\n'
     journalctl --user -p warning..err --since "10 minutes ago" -n 35 --no-pager -o short-iso 2>/dev/null || true
@@ -672,9 +668,9 @@ cmd_ask() {
   fi
 
   local prefer_api=0
-  if [[ $model_requires_api == 1 && -n $active_key ]]; then
+  if [[ $model_requires_api == 1 ]]; then
     prefer_api=1
-  elif [[ $auth_mode == "api" && -n $active_key ]]; then
+  elif [[ $auth_mode == "api" ]]; then
     prefer_api=1
   elif [[ $auth_mode == "cli" ]]; then
     prefer_api=0
@@ -686,18 +682,14 @@ cmd_ask() {
     prefer_api=1
   fi
 
-  if [[ $prefer_api == 1 && -n $active_key ]]; then
+  # Strict auth & service boundary: never fall back across API <-> CLI or across independent services
+  if [[ $prefer_api == 1 ]]; then
+    if [[ -z $active_key ]]; then
+      rm -f "$answer_file"
+      fail "API authentication selected for ${vendor} (${model}), but no API key is configured."
+    fi
     printf 'STEP\tCalling %s Vision API (%s)…\n' "$vendor" "$model"
     run_api "$vendor" "$model" "$prompt" "$work/shot.png" "$active_key" "$work" "$raw" 2>"$raw.err" || code=$?
-    if [[ $code -ne 0 && ! -s $raw ]]; then
-      if [[ ($vendor == "gemini" || $vendor == "anthropic") ]] && command -v agy >/dev/null 2>&1; then
-        code=0
-        (cd "$work" && run_agy_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
-      elif [[ $vendor == "xai" ]] && command -v grok >/dev/null 2>&1; then
-        code=0
-        (cd "$work" && run_grok_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
-      fi
-    fi
   elif [[ ($vendor == "gemini" || $vendor == "anthropic" || $model == gpt-oss-*) ]] && command -v agy >/dev/null 2>&1; then
     extract_provider="text"
     (cd "$work" && run_agy_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
@@ -707,19 +699,9 @@ cmd_ask() {
   elif [[ $vendor == "xai" ]] && command -v grok >/dev/null 2>&1; then
     extract_provider="text"
     (cd "$work" && run_grok_stream "$model" "$prompt" "$raw" "$raw.err") || code=$?
-  elif [[ -n $active_key ]]; then
-    printf 'STEP\tCalling %s Vision API (%s)…\n' "$vendor" "$model"
-    run_api "$vendor" "$model" "$prompt" "$work/shot.png" "$active_key" "$work" "$raw" 2>"$raw.err" || code=$?
   else
     rm -f "$answer_file"
-    fail "No Omarchy agent or API key configured for ${vendor}. Add one in Aeye top-bar settings."
-  fi
-
-  # Graceful fallback to API key if CLI returned error with empty stdout
-  if [[ $code -ne 0 && ! -s $raw && -n $active_key ]]; then
-    code=0
-    extract_provider="text"
-    run_api "$vendor" "$model" "$prompt" "$work/shot.png" "$active_key" "$work" "$raw" 2>"$raw.err" || code=$?
+    fail "No Omarchy CLI agent configured for ${vendor}. Install one or switch ${vendor} to API mode."
   fi
 
   if [[ $code -ne 0 && ! -s $raw ]]; then
@@ -1054,61 +1036,38 @@ cmd_edit() {
   fi
 }
 
-find_new_screenshot() {
-  local start_ns="$1"
-  shift
-  python3 - "$start_ns" "$@" <<'PY'
-import os, sys
-
-start_ns = int(sys.argv[1])
-exts = (".png", ".jpg", ".jpeg", ".webp")
-best_path = ""
-best_mtime = -1
-
-for folder in sys.argv[2:]:
-    if not folder or not os.path.isdir(folder):
-        continue
-    try:
-        with os.scandir(folder) as it:
-            for entry in it:
-                if not entry.is_file():
-                    continue
-                if not entry.name.lower().endswith(exts):
-                    continue
-                try:
-                    mtime = entry.stat().st_mtime_ns
-                except OSError:
-                    continue
-                if mtime >= start_ns and mtime > best_mtime:
-                    best_mtime = mtime
-                    best_path = entry.path
-    except OSError:
-        continue
-
-if best_path:
-    print(best_path)
-PY
+# Capture region into an isolated 0700 staging directory under $runtime_dir so a cancelled capture
+# can never pick up unrelated images created concurrently in ~/Pictures or ~/Pictures/Screenshots.
+capture_region_isolated() {
+  ensure_runtime
+  local cap_dir dest_dir out captured="" final_path=""
+  cap_dir="$(mktemp -d "$runtime_dir/cap.XXXXXX")"
+  chmod 700 "$cap_dir" 2>/dev/null || true
+  if command -v omasnap >/dev/null 2>&1; then
+    # Use omasnap directly without --notify so Aeye captures stay silent
+    out="$(OMASNAP_SCREENSHOT_DIR="$cap_dir" OMARCHY_SCREENSHOT_DIR="$cap_dir" omasnap --capture-region --save 2>/dev/null || true)"
+  else
+    out="$(OMASNAP_SCREENSHOT_DIR="$cap_dir" OMARCHY_SCREENSHOT_DIR="$cap_dir" omarchy capture screenshot region save 2>/dev/null || true)"
+  fi
+  captured="$(find "$cap_dir" -maxdepth 1 -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | head -n 1)"
+  if [[ -z $captured || ! -s $captured ]]; then
+    rm -rf -- "$cap_dir" 2>/dev/null || true
+    return 1
+  fi
+  dest_dir="$(pictures_dir)"
+  mkdir -p "$dest_dir" 2>/dev/null || dest_dir="$runtime_dir"
+  final_path="$dest_dir/$(basename "$captured")"
+  mv -f -- "$captured" "$final_path" 2>/dev/null || final_path="$captured"
+  rm -rf -- "$cap_dir" 2>/dev/null || true
+  [[ -f $final_path && -s $final_path ]] || return 1
+  printf '%s\n' "$final_path"
 }
 
 cmd_capture() {
-  local start_ns out path minimal lang dir base
-  start_ns="$(date +%s%N)"
-  if command -v omasnap >/dev/null 2>&1; then
-    # Use omasnap directly without --notify so Aeye captures stay silent
-    # (regular Omarchy screenshots outside Aeye keep their normal notifications).
-    out="$(omasnap --capture-region --save 2>/dev/null || true)"
-  else
-    out="$(omarchy capture screenshot region save 2>/dev/null || true)"
-  fi
-  path="$(printf '%s\n' "$out" | awk '/^\// { p = $0 } END { print p }')"
-  if [[ -z $path || ! -f $path ]]; then
-    dir="$(pictures_dir)"
-    base="$(base_pictures_dir)"
-    path="$(find_new_screenshot "$start_ns" "$dir" "$base")"
-  fi
+  local path payload res
+  path="$(capture_region_isolated || true)"
   [[ -n $path && -f $path ]] || exit 0
   wl-copy --type image/png <"$path" || true
-  local payload res
   payload="$(jq -nc --arg path "$path" '{path:$path}')"
   res="$(omarchy-shell shell call io.github.7eleven77.aeye compose "$payload" 2>/dev/null || true)"
   if [[ $res != "ok" ]]; then
@@ -1117,20 +1076,9 @@ cmd_capture() {
 }
 
 cmd_capture_path() {
-  local start_ns out path dir base
+  local path
   sleep 0.14
-  start_ns="$(date +%s%N)"
-  if command -v omasnap >/dev/null 2>&1; then
-    out="$(omasnap --capture-region --save 2>/dev/null || true)"
-  else
-    out="$(omarchy capture screenshot region save 2>/dev/null || true)"
-  fi
-  path="$(printf '%s\n' "$out" | awk '/^\// { p = $0 } END { print p }')"
-  if [[ -z $path || ! -f $path ]]; then
-    dir="$(pictures_dir)"
-    base="$(base_pictures_dir)"
-    path="$(find_new_screenshot "$start_ns" "$dir" "$base")"
-  fi
+  path="$(capture_region_isolated || true)"
   if [[ -n $path && -f $path ]]; then
     wl-copy --type image/png <"$path" || true
     printf 'OK\t%s\n' "$path"
